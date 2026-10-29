@@ -1,0 +1,7 @@
+# Copier en terraform.tfvars (ignore par git) et renseigner.
+
+project_id = "lol-meta-pipeline"
+
+# Choix de cout, voir README. Le free tier Cloud Storage (5 Go-mois) n'existe
+# QUE dans us-east1, us-west1 et us-central1.
+region = "us-central1"

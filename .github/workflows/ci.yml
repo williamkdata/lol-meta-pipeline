@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+
+      - run: uv sync
+
+      # Avant les tests : une faute de style ou un import inutilise echoue en
+      # quelques secondes, sans attendre la suite complete.
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format
+        run: uv run ruff format --check .
+
+      - run: uv run pytest
+
+      # Aucun identifiant cloud dans la CI : dbt parse verifie la syntaxe, les
+      # ref() et les source() SANS se connecter a BigQuery.
+      - name: Validate dbt syntax
+        run: uv run dbt parse --profiles-dir dbt/profiles --project-dir dbt

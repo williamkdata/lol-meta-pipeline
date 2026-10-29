@@ -1,0 +1,39 @@
+# Python / uv
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Secrets et configuration locale : JAMAIS versionnes
+.env
+secrets/
+
+# Terraform : l'etat contient des identifiants, les tfvars des valeurs propres
+# au compte. Le .terraform.lock.hcl, lui, EST versionne (il fige le provider).
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+*.tfplan
+crash.log
+
+# dbt (artefacts)
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+dbt/profiles/.user.yml
+
+# Airflow local (artefacts)
+airflow/logs/
+airflow/plugins/
+airflow/config/
+
+# Donnees locales : cache Oracle's Elixir, JSON Riot de developpement.
+# Les CGU de Riot interdisent la rediffusion des donnees brutes en masse.
+data/
+
+# OS / editeur
+.DS_Store
+.vscode/

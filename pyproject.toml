@@ -1,0 +1,39 @@
+[project]
+name = "lol-meta-pipeline"
+version = "0.1.0"
+description = "Meta de League of Legends : ladder EUW et competition pro, sur GCP / BigQuery / dbt"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "requests>=2.34.2",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+# Ou vit le code du projet : sans cette ligne, ruff classe les modules de
+# ingestion/ parmi les bibliotheques externes et range mal les imports.
+# Meme dossier que le pythonpath de pytest, plus bas.
+src = ["ingestion"]
+
+[tool.ruff.lint]
+# F  : erreurs reelles (import inutilise, variable non definie)
+# E,W: mise en forme PEP 8
+# I  : ordre des imports
+# UP : syntaxe moderne pour Python 3.12
+# B  : pieges courants (bugbear)
+# SIM: simplifications lisibles
+# RUF: regles propres a ruff
+select = ["F", "E", "W", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+pythonpath = ["ingestion"]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "dbt-bigquery>=1.12.1",
+    "dbt-core>=1.12.6",
+    "pytest>=9.2.0",
+    "ruff>=0.17.3",
+]

@@ -1,0 +1,33 @@
+# Aucun secret ici : seulement des noms de variables d'environnement.
+#
+# Deux cibles, un seul entrepot :
+#   dev  : ton compte Google (oauth), ecrit dans lol_analytics_dev, que dbt cree
+#          lui-meme au premier run. C'est la ou on casse des choses.
+#   prod : le compte de service d'Airflow, ecrit dans lol_analytics (cree par
+#          Terraform). Sa methode d'authentification suit DBT_GCP_KEYFILE :
+#          renseignee dans le conteneur -> compte de service ; vide -> oauth.
+#
+# maximum_bytes_billed : une requete qui lirait plus de 1 Gio ECHOUE au lieu de
+# s'executer. Sur un free tier de 1 Tio par mois partage avec Velib', c'est le
+# garde-fou contre un SELECT * sur les timelines.
+lol_meta:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: oauth
+      project: "{{ env_var('GCP_PROJECT_ID', 'lol-meta-pipeline') }}"
+      dataset: lol_analytics_dev
+      location: "{{ env_var('GCP_REGION', 'us-central1') }}"
+      threads: 4
+      maximum_bytes_billed: 1073741824
+
+    prod:
+      type: bigquery
+      method: "{{ 'service-account' if env_var('DBT_GCP_KEYFILE', '') else 'oauth' }}"
+      keyfile: "{{ env_var('DBT_GCP_KEYFILE', '') }}"
+      project: "{{ env_var('GCP_PROJECT_ID', 'lol-meta-pipeline') }}"
+      dataset: lol_analytics
+      location: "{{ env_var('GCP_REGION', 'us-central1') }}"
+      threads: 4
+      maximum_bytes_billed: 1073741824
