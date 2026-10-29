@@ -1,16 +1,26 @@
 """Client Oracle's Elixir : les matchs pro de la saison, un fichier par an."""
 
 import hashlib
+import os
 import re
+from datetime import date
 
-from google.cloud import bigquery
+from google.auth.transport.requests import AuthorizedSession
+from google.cloud import bigquery, storage
+from google.oauth2 import service_account
 
+from landing import upload_to_gcs
 from oe_columns import OE_COLUMNS
 
 DRIVE_FOLDER_ID = "1gLSw0RLjBbtaNy0dgnGQDAZOHIgCe-HH"
 DRIVE_FILES_URL = "https://www.googleapis.com/drive/v3/files"
 TIMEOUT_S = 30
 OE_TABLE = "lol-meta-pipeline.lol_raw.oe_matches"
+CLE_COMPTE_DE_SERVICE = os.environ.get("LOL_SA_KEY", "secrets/lol-pipeline-key.json")
+SCOPES = [
+    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/cloud-platform",
+]
 
 
 def check_header(contenu: str) -> None:
@@ -96,3 +106,29 @@ def load_oe(adresse: str, lignes_attendues: int, client) -> int:
             f"{lignes_attendues} lignes attendues, {job.output_rows} chargees"
         )
     return job.output_rows
+
+
+def load_season_file(annee: int, session, storage_client, bq_client) -> int:
+    """Telecharge le fichier de la saison, le depose dans le bucket, le charge."""
+    fiche = find_season_file(annee, session)
+    contenu = download_file(fiche, session)
+
+    jour = fiche["modifiedTime"][:10]
+    chemin = f"oracles_elixir/{annee}/{jour}.csv.gz"
+    adresse = upload_to_gcs(contenu, chemin, storage_client)
+
+    lignes_attendues = contenu.count(b"\n") - 1
+    return load_oe(adresse, lignes_attendues, bq_client)
+
+
+if __name__ == "__main__":
+    identite = service_account.Credentials.from_service_account_file(
+        CLE_COMPTE_DE_SERVICE, scopes=SCOPES
+    )
+    chargees = load_season_file(
+        date.today().year,
+        AuthorizedSession(identite),
+        storage.Client(project="lol-meta-pipeline", credentials=identite),
+        bigquery.Client(project="lol-meta-pipeline", credentials=identite),
+    )
+    print(f"{chargees} lignes chargees dans {OE_TABLE}")

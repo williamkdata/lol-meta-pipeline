@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import requests
 
-from fakes import FakeBigQuery, FakeHttp, FakeResponse
+from fakes import FakeBigQuery, FakeHttp, FakeResponse, FakeStorage
 from oe_columns import OE_COLUMNS
 from oracles_elixir import (
     bq_column_name,
@@ -13,6 +13,7 @@ from oracles_elixir import (
     download_file,
     find_season_file,
     load_oe,
+    load_season_file,
 )
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -169,8 +170,9 @@ def test_find_season_file_raises_on_a_drive_error():
 
 # --- download_file ----------------------------------------------------------
 
-# Un petit CSV valide : le vrai en-tete et une ligne, en octets.
-CSV = (ENTETE + SUITE).encode("utf-8")
+# Un petit CSV valide : le vrai en-tete et une ligne, en octets. Il se
+# termine par un saut de ligne, comme le vrai fichier (mesure le 29/10/2026).
+CSV = (ENTETE + SUITE + "\n").encode("utf-8")
 
 
 def fiche_de(contenu):
@@ -240,6 +242,7 @@ def test_download_file_raises_on_a_drive_error():
 
 # --- load_oe ----------------------------------------------------------------
 
+BUCKET = "lol-meta-pipeline-landing"
 ADRESSE = "gs://lol-meta-pipeline-landing/oracles_elixir/2026/2026-10-29.csv.gz"
 LIGNES_2026 = 117_876  # mesure sur le vrai fichier du 29/10/2026
 
@@ -337,3 +340,64 @@ def test_cleaned_names_stay_unique():
     noms = [bq_column_name(colonne) for colonne in OE_COLUMNS]
 
     assert len(set(noms)) == len(noms)
+
+
+# --- load_season_file -------------------------------------------------------
+
+DRIVE = "https://www.googleapis.com/drive/v3/files"
+LIGNES_CSV = 1  # le petit CSV contient une seule ligne de donnees
+
+
+def drive_complet(contenu, fiche):
+    """Un faux Drive qui repond a la recherche ET au telechargement."""
+    http = FakeHttp()
+    http.reponses[DRIVE] = FakeResponse({"files": [fiche]})
+    http.reponses[f"{DRIVE}/{fiche['id']}"] = FakeResponse(content=contenu)
+    return http
+
+
+def fiche_publiee(contenu):
+    return {**fiche_de(contenu), "modifiedTime": "2026-10-29T13:05:04.895Z"}
+
+
+def test_load_season_file_chains_everything_and_returns_the_rows_loaded():
+    storage = FakeStorage()
+    bq = FakeBigQuery(lignes_annoncees=LIGNES_CSV)
+
+    chargees = load_season_file(
+        2026, drive_complet(CSV, fiche_publiee(CSV)), storage, bq
+    )
+
+    assert chargees == LIGNES_CSV
+    [(source, destination, _)] = bq.appels
+    assert source == f"gs://{BUCKET}/oracles_elixir/2026/2026-10-29.csv.gz"
+    assert destination == "lol-meta-pipeline.lol_raw.oe_matches"
+
+
+def test_load_season_file_names_the_object_after_the_publication_date():
+    """La date de PUBLICATION du fichier, pas celle du lancement : relancer
+    le meme jour ecrase le meme objet au lieu d'en creer un second."""
+    storage = FakeStorage()
+
+    load_season_file(
+        2026,
+        drive_complet(CSV, fiche_publiee(CSV)),
+        storage,
+        FakeBigQuery(lignes_annoncees=LIGNES_CSV),
+    )
+
+    assert list(storage.objets) == [(BUCKET, "oracles_elixir/2026/2026-10-29.csv.gz")]
+
+
+def test_load_season_file_sends_nothing_when_the_file_is_doubtful():
+    """Empreinte fausse : ni depot dans le bucket, ni chargement dans BigQuery.
+    La table de la veille reste intacte."""
+    abime = CSV[:-1] + b"9"
+    storage = FakeStorage()
+    bq = FakeBigQuery(lignes_annoncees=LIGNES_CSV)
+
+    with pytest.raises(ValueError):
+        load_season_file(2026, drive_complet(abime, fiche_publiee(CSV)), storage, bq)
+
+    assert storage.objets == {}
+    assert bq.appels == []

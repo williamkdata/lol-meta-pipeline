@@ -2,7 +2,7 @@
 
 Pipeline de données sur la meta de *League of Legends* : quels champions, builds et runes performent par matchup et par patch, comment se jouent les timings d'avantage — et combien de temps met un pick vu en compétition professionnelle à descendre sur la ladder haut elo.
 
-> **En construction — étape 1 sur 9** (squelette et infrastructure).
+> **En construction — étape 3 sur 9.** Infrastructure en place ; Data Dragon (référentiel des champions par patch) et Oracle's Elixir (matchs pro de la saison) chargés dans BigQuery.
 
 ## Sources
 
@@ -41,6 +41,6 @@ tests/            pytest hors ligne, sans identifiant
 
 ## Attribution et conditions d'utilisation
 
-- Données de compétition : [Oracle's Elixir](https://oracleselixir.com/). Une partie du contenu provient de [Leaguepedia](https://lol.fandom.com/), sous licence CC BY-SA.
+- Données de compétition : [Oracle's Elixir](https://oracleselixir.com/). Une partie du contenu provient de [Leaguepedia](https://lol.fandom.com/), sous licence CC BY-SA 3.0.
 - Les statistiques de jeu sont la propriété de Riot Games. Ce projet n'est ni approuvé ni sponsorisé par Riot Games, et ne reflète pas ses positions.
 - Seuls le code et des agrégats sont publiés. Les données brutes ne sont pas redistribuées.
