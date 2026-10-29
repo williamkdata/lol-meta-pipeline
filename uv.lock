@@ -1052,6 +1052,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "google-cloud-bigquery" },
+    { name = "google-cloud-storage" },
     { name = "requests" },
 ]
 
@@ -1066,6 +1067,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "google-cloud-bigquery", specifier = ">=3.46.2" },
+    { name = "google-cloud-storage", specifier = ">=3.1.1" },
     { name = "requests", specifier = ">=2.34.2" },
 ]
 

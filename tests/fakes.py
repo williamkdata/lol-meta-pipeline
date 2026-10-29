@@ -71,3 +71,45 @@ class FakeBigQuery:
             annoncees = self.lignes_annoncees
         self.job = FakeJob(annoncees)
         return self.job
+
+
+class FakeBlob:
+    """Un objet du faux bucket. Note ce qu'on y a depose."""
+
+    def __init__(self, nom, taille_annoncee=None):
+        self.name = nom
+        self.data = None
+        self.content_type = None
+        self.size = None
+        self._taille_annoncee = taille_annoncee
+
+    def upload_from_string(self, data, content_type=None):
+        self.data = data
+        self.content_type = content_type
+        if self._taille_annoncee is None:
+            self.size = len(data)
+        else:
+            self.size = self._taille_annoncee
+
+
+class FakeBucket:
+    def __init__(self, nom, client):
+        self.name = nom
+        self._client = client
+
+    def blob(self, chemin):
+        objet = FakeBlob(chemin, self._client.taille_annoncee)
+        self._client.objets[(self.name, chemin)] = objet
+        return objet
+
+
+class FakeStorage:
+    """Remplace le client Cloud Storage : aucun appel reel. On peut lui faire
+    annoncer une taille recue differente de celle envoyee."""
+
+    def __init__(self, taille_annoncee=None):
+        self.taille_annoncee = taille_annoncee
+        self.objets = {}
+
+    def bucket(self, nom):
+        return FakeBucket(nom, self)
