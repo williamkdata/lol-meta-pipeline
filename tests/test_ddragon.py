@@ -1,6 +1,8 @@
 import pytest
+import requests
 
-from ddragon import flatten_champions, patch_of
+import ddragon
+from ddragon import fetch_champions, fetch_versions, flatten_champions, patch_of
 
 # --- patch_of ---------------------------------------------------------------
 
@@ -107,3 +109,116 @@ def test_flatten_champions_refuses_a_malformed_version():
 
 def test_flatten_champions_without_any_champion():
     assert flatten_champions({**CHAMPIONS, "data": {}}) == []
+
+
+# --- fetch_versions ---------------------------------------------------------
+
+
+class FakeResponse:
+    """Ce que renvoie le faux requests.get : une reponse reglee a la main."""
+
+    def __init__(self, data, status_code=200):
+        self._data = data
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"{self.status_code} Server Error")
+
+    def json(self):
+        return self._data
+
+
+class FakeHttp:
+    """Remplace requests.get pendant un test. On regle la reponse a renvoyer,
+    et chaque appel est note pour verifier ce que le code a demande."""
+
+    def __init__(self):
+        self.reponse = FakeResponse([])
+        self.appels = []
+
+    def get(self, url, **options):
+        self.appels.append((url, options))
+        return self.reponse
+
+
+@pytest.fixture
+def http(monkeypatch):
+    """Aucun appel reseau reel : requests.get est remplace dans le module ddragon."""
+    faux = FakeHttp()
+    monkeypatch.setattr(ddragon.requests, "get", faux.get)
+    return faux
+
+
+def test_fetch_versions_returns_the_published_list(http):
+    http.reponse = FakeResponse(["16.21.1", "16.20.1"])
+
+    assert fetch_versions() == ["16.21.1", "16.20.1"]
+
+
+def test_fetch_versions_calls_data_dragon_with_a_timeout(http):
+    """Sans delai maximum, un serveur lent fait attendre le code indefiniment.
+    C'est l'erreur ReadTimeout vue 291 fois sur adsb.lol au projet 2."""
+    http.reponse = FakeResponse(["16.21.1"])
+
+    fetch_versions()
+
+    [(url, options)] = http.appels
+    assert url == "https://ddragon.leagueoflegends.com/api/versions.json"
+    assert options["timeout"] > 0
+
+
+def test_fetch_versions_raises_on_a_server_error(http):
+    """Une page d'erreur ne doit jamais etre lue comme des donnees."""
+    http.reponse = FakeResponse(None, status_code=503)
+
+    with pytest.raises(requests.HTTPError):
+        fetch_versions()
+
+
+def test_fetch_versions_refuses_an_empty_list(http):
+    """Une liste vide n'est pas « aucune version » : c'est une reponse anormale.
+    Mieux vaut s'arreter ici que planter plus loin sans explication."""
+    http.reponse = FakeResponse([])
+
+    with pytest.raises(ValueError):
+        fetch_versions()
+
+
+# --- fetch_champions --------------------------------------------------------
+
+
+def test_fetch_champions_requests_the_english_file_of_the_version(http):
+    """Anglais : c'est la langue des noms de champions dans les donnees pro."""
+    http.reponse = FakeResponse(CHAMPIONS)
+
+    fetch_champions("16.21.1")
+
+    [(url, options)] = http.appels
+    assert url == (
+        "https://ddragon.leagueoflegends.com/cdn/16.21.1/data/en_US/champion.json"
+    )
+    assert options["timeout"] > 0
+
+
+def test_fetch_champions_returns_the_file(http):
+    http.reponse = FakeResponse(CHAMPIONS)
+
+    assert fetch_champions("16.21.1") == CHAMPIONS
+
+
+def test_fetch_champions_raises_on_an_unknown_version(http):
+    """Une version pas encore publiee (ou mal tapee) donne une page 404."""
+    http.reponse = FakeResponse(None, status_code=404)
+
+    with pytest.raises(requests.HTTPError):
+        fetch_champions("16.99.1")
+
+
+def test_fetch_champions_refuses_a_file_of_another_version(http):
+    """Le fichier annonce sa propre version. Si ce n'est pas celle demandee,
+    toutes les lignes seraient etiquetees avec le mauvais patch, sans message."""
+    http.reponse = FakeResponse(CHAMPIONS)  # ce faux fichier est en 16.21.1
+
+    with pytest.raises(ValueError):
+        fetch_champions("16.20.1")
