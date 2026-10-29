@@ -7,11 +7,15 @@ import requests
 
 
 class FakeResponse:
-    """Ce que renvoie le faux requests.get : une reponse reglee a la main."""
+    """Ce que renvoie le faux requests.get : une reponse reglee a la main.
 
-    def __init__(self, data, status_code=200):
+    `data` est ce que renvoie .json() ; `content` les octets bruts d'un fichier
+    telecharge."""
+
+    def __init__(self, data=None, status_code=200, content=b""):
         self._data = data
         self.status_code = status_code
+        self.content = content
 
     def raise_for_status(self):
         if self.status_code >= 400:

@@ -8,6 +8,12 @@ resource "google_project_service" "apis" {
     "bigquery.googleapis.com",
     "storage.googleapis.com",
     "iam.googleapis.com",
+    # Telechargement d'Oracle's Elixir : le dossier public est sur Google
+    # Drive. L'API, utilisee avec le compte de service, trouve le fichier par
+    # son nom, connait sa date de modification et son empreinte MD5 — et
+    # signale un quota depasse par un vrai statut d'erreur, la ou le
+    # telechargement anonyme renvoyait une page web avec un statut 200.
+    "drive.googleapis.com",
   ])
 
   service = each.value
