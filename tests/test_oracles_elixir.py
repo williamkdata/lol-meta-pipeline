@@ -1,12 +1,19 @@
 import hashlib
+import re
 from pathlib import Path
 
 import pytest
 import requests
 
-from fakes import FakeHttp, FakeResponse
+from fakes import FakeBigQuery, FakeHttp, FakeResponse
 from oe_columns import OE_COLUMNS
-from oracles_elixir import check_header, download_file, find_season_file
+from oracles_elixir import (
+    bq_column_name,
+    check_header,
+    download_file,
+    find_season_file,
+    load_oe,
+)
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -229,3 +236,104 @@ def test_download_file_raises_on_a_drive_error():
 
     with pytest.raises(requests.HTTPError):
         download_file(fiche_de(CSV), http)
+
+
+# --- load_oe ----------------------------------------------------------------
+
+ADRESSE = "gs://lol-meta-pipeline-landing/oracles_elixir/2026/2026-10-29.csv.gz"
+LIGNES_2026 = 117_876  # mesure sur le vrai fichier du 29/10/2026
+
+
+def charge(lignes_chargees=LIGNES_2026, lignes_attendues=LIGNES_2026):
+    """Lance load_oe contre un faux BigQuery qui annonce `lignes_chargees`.
+    Renvoie le faux client et ce que load_oe lui a demande."""
+    client = FakeBigQuery(lignes_annoncees=lignes_chargees)
+    load_oe(ADRESSE, lignes_attendues, client)
+    [(source, destination, config)] = client.appels
+    return client, source, destination, config
+
+
+def test_load_oe_reads_the_file_from_the_bucket_into_the_raw_table():
+    """BigQuery lit le fichier directement dans le bucket : il ne repasse pas
+    par la machine qui lance le pipeline."""
+    _, source, destination, _ = charge()
+
+    assert source == ADRESSE
+    assert destination == "lol-meta-pipeline.lol_raw.oe_matches"
+
+
+def test_load_oe_replaces_the_table():
+    """Le fichier contient TOUTE la saison, republiee chaque jour. En ajoutant,
+    chaque match serait present une fois par jour de chargement."""
+    _, _, _, config = charge()
+
+    assert config.write_disposition == "WRITE_TRUNCATE"
+
+
+def test_load_oe_reads_a_csv_and_skips_its_header():
+    """Sans sauter la premiere ligne, l'en-tete deviendrait un match dont le
+    gameid vaudrait 'gameid'."""
+    _, _, _, config = charge()
+
+    assert config.source_format == "CSV"
+    assert config.skip_leading_rows == 1
+
+
+def test_load_oe_imposes_the_165_columns_as_text_in_file_order():
+    """Tout en texte dans le brut : c'est le staging qui typera, en SQL.
+    Et dans l'ordre du fichier, puisque BigQuery associe par position."""
+    _, _, _, config = charge()
+
+    assert [champ.name for champ in config.schema] == [
+        bq_column_name(colonne) for colonne in OE_COLUMNS
+    ]
+    assert {champ.field_type for champ in config.schema} == {"STRING"}
+
+
+def test_load_oe_waits_and_returns_the_rows_loaded():
+    client, _, _, _ = charge()
+
+    assert client.job.attendu
+    assert client.job.output_rows == LIGNES_2026
+
+
+def test_load_oe_refuses_a_row_count_mismatch():
+    """BigQuery dit avoir charge moins de lignes que le fichier n'en contient :
+    des matchs se sont perdus en route."""
+    with pytest.raises(RuntimeError):
+        charge(lignes_chargees=117_000)
+
+
+# --- bq_column_name ---------------------------------------------------------
+
+# La regle de BigQuery : une lettre ou un _, puis lettres, chiffres ou _.
+NOM_VALIDE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def test_bq_column_name_keeps_a_valid_name_unchanged():
+    for nom in ("gameid", "firstPick", "golddiffat10"):
+        assert bq_column_name(nom) == nom
+
+
+def test_bq_column_name_replaces_spaces():
+    assert bq_column_name("team kpm") == "team_kpm"
+    assert bq_column_name("total cs") == "total_cs"
+
+
+def test_bq_column_name_handles_the_parentheses():
+    """Ni double _ au milieu, ni _ final : un nom propre a ecrire en SQL."""
+    assert bq_column_name("dragons (type unknown)") == "dragons_type_unknown"
+
+
+def test_every_oe_column_gets_a_name_bigquery_accepts():
+    """Le vrai BigQuery a refuse 'dragons (type unknown)' le 29/10/2026."""
+    for colonne in OE_COLUMNS:
+        assert NOM_VALIDE.fullmatch(bq_column_name(colonne)), colonne
+
+
+def test_cleaned_names_stay_unique():
+    """Deux colonnes ne doivent pas devenir le meme nom une fois nettoyees
+    ('total cs' et 'total_cs' par exemple) : BigQuery refuserait la table."""
+    noms = [bq_column_name(colonne) for colonne in OE_COLUMNS]
+
+    assert len(set(noms)) == len(noms)

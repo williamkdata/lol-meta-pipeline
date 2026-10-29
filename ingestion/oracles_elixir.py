@@ -1,12 +1,16 @@
 """Client Oracle's Elixir : les matchs pro de la saison, un fichier par an."""
 
 import hashlib
+import re
+
+from google.cloud import bigquery
 
 from oe_columns import OE_COLUMNS
 
 DRIVE_FOLDER_ID = "1gLSw0RLjBbtaNy0dgnGQDAZOHIgCe-HH"
 DRIVE_FILES_URL = "https://www.googleapis.com/drive/v3/files"
 TIMEOUT_S = 30
+OE_TABLE = "lol-meta-pipeline.lol_raw.oe_matches"
 
 
 def check_header(contenu: str) -> None:
@@ -23,6 +27,11 @@ def check_header(contenu: str) -> None:
         raise ValueError(
             f"en-tete inattendu : ajoutees {ajoutees}, disparues {disparues}"
         )
+
+
+def bq_column_name(nom: str) -> str:
+    """Le nom d'une colonne du fichier, rendu acceptable par BigQuery."""
+    return re.sub(r"[^A-Za-z0-9_]+", "_", nom).strip("_")
 
 
 def find_season_file(annee: int, session) -> dict:
@@ -64,3 +73,26 @@ def download_file(fiche: dict, session) -> bytes:
 
     check_header(contenu.decode("utf-8"))
     return contenu
+
+
+OE_SCHEMA = [
+    bigquery.SchemaField(bq_column_name(colonne), "STRING") for colonne in OE_COLUMNS
+]
+
+
+def load_oe(adresse: str, lignes_attendues: int, client) -> int:
+    """Remplace la table brute par le fichier de la saison depose dans le bucket."""
+    config = bigquery.LoadJobConfig(
+        source_format=bigquery.SourceFormat.CSV,
+        skip_leading_rows=1,
+        schema=OE_SCHEMA,
+        write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+    )
+    job = client.load_table_from_uri(adresse, OE_TABLE, job_config=config)
+    job.result()
+
+    if job.output_rows != lignes_attendues:
+        raise RuntimeError(
+            f"{lignes_attendues} lignes attendues, {job.output_rows} chargees"
+        )
+    return job.output_rows

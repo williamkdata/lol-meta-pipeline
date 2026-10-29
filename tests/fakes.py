@@ -72,6 +72,13 @@ class FakeBigQuery:
         self.job = FakeJob(annoncees)
         return self.job
 
+    def load_table_from_uri(self, source, destination, job_config=None):
+        """Chargement depuis un fichier du bucket : le faux ne lit rien, il
+        annonce le nombre de lignes qu'on lui a regle (0 par defaut)."""
+        self.appels.append((source, destination, job_config))
+        self.job = FakeJob(self.lignes_annoncees or 0)
+        return self.job
+
 
 class FakeBlob:
     """Un objet du faux bucket. Note ce qu'on y a depose."""
