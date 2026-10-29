@@ -2,7 +2,15 @@ import pytest
 import requests
 
 import ddragon
-from ddragon import fetch_champions, fetch_versions, flatten_champions, patch_of
+from ddragon import (
+    fetch_champions,
+    fetch_versions,
+    flatten_champions,
+    load_season,
+    patch_of,
+    season_versions,
+)
+from fakes import FakeBigQuery, FakeHttp, FakeResponse
 
 # --- patch_of ---------------------------------------------------------------
 
@@ -114,34 +122,6 @@ def test_flatten_champions_without_any_champion():
 # --- fetch_versions ---------------------------------------------------------
 
 
-class FakeResponse:
-    """Ce que renvoie le faux requests.get : une reponse reglee a la main."""
-
-    def __init__(self, data, status_code=200):
-        self._data = data
-        self.status_code = status_code
-
-    def raise_for_status(self):
-        if self.status_code >= 400:
-            raise requests.HTTPError(f"{self.status_code} Server Error")
-
-    def json(self):
-        return self._data
-
-
-class FakeHttp:
-    """Remplace requests.get pendant un test. On regle la reponse a renvoyer,
-    et chaque appel est note pour verifier ce que le code a demande."""
-
-    def __init__(self):
-        self.reponse = FakeResponse([])
-        self.appels = []
-
-    def get(self, url, **options):
-        self.appels.append((url, options))
-        return self.reponse
-
-
 @pytest.fixture
 def http(monkeypatch):
     """Aucun appel reseau reel : requests.get est remplace dans le module ddragon."""
@@ -222,3 +202,89 @@ def test_fetch_champions_refuses_a_file_of_another_version(http):
 
     with pytest.raises(ValueError):
         fetch_champions("16.20.1")
+
+
+# --- season_versions --------------------------------------------------------
+
+
+def test_season_versions_keeps_only_the_latest_season():
+    """Les donnees pro couvrent toute la saison : la dimension aussi."""
+    versions = ["16.21.1", "16.20.1", "15.24.1", "15.23.1"]
+
+    assert season_versions(versions) == ["16.21.1", "16.20.1"]
+
+
+def test_season_versions_ignores_malformed_versions():
+    """Les 98 versions au format ancien sont ecartees sans faire echouer le tri."""
+    versions = ["16.21.1", "16.20.1", "lolpatch_7.20"]
+
+    assert season_versions(versions) == ["16.21.1", "16.20.1"]
+
+
+def test_season_versions_keeps_the_most_recent_first():
+    versions = ["16.3.1", "16.2.1", "16.1.1"]
+
+    assert season_versions(versions) == ["16.3.1", "16.2.1", "16.1.1"]
+
+
+def test_season_versions_refuses_an_empty_list():
+    """Sans cette protection, versions[0] leverait une IndexError obscure."""
+    with pytest.raises(ValueError):
+        season_versions([])
+
+
+# --- load_season ------------------------------------------------------------
+
+CDN = "https://ddragon.leagueoflegends.com/cdn"
+VERSIONS = "https://ddragon.leagueoflegends.com/api/versions.json"
+
+
+def champions_url(version):
+    return f"{CDN}/{version}/data/en_US/champion.json"
+
+
+@pytest.fixture
+def saison(http):
+    """Un Data Dragon miniature : deux patches de la saison 16, un de la 15."""
+    http.reponses[VERSIONS] = FakeResponse(["16.2.1", "16.1.1", "15.24.1"])
+    for version in ("16.2.1", "16.1.1"):
+        http.reponses[champions_url(version)] = FakeResponse(
+            {**CHAMPIONS, "version": version}
+        )
+    return http
+
+
+def test_load_season_loads_every_patch_of_the_season_in_one_load(saison):
+    """2 champions x 2 patches = 4 lignes, en UN seul chargement : le controle
+    du nombre de lignes porte alors sur toute la saison."""
+    client = FakeBigQuery()
+
+    load_season(client)
+
+    [(rows, destination, _)] = client.appels
+    assert len(rows) == 4
+    assert destination == "lol-meta-pipeline.lol_raw.ddragon_champions"
+    assert {row["patch"] for row in rows} == {"16.2", "16.1"}
+
+
+def test_load_season_does_not_fetch_the_previous_season(saison):
+    load_season(FakeBigQuery())
+
+    urls = [url for url, _ in saison.appels]
+    assert champions_url("15.24.1") not in urls
+
+
+def test_load_season_imposes_the_champions_schema(saison):
+    """Le numero est un entier, les roles une liste : BigQuery ne devine rien."""
+    client = FakeBigQuery()
+
+    load_season(client)
+
+    [(_, _, config)] = client.appels
+    types = {champ.name: (champ.field_type, champ.mode) for champ in config.schema}
+    assert types["champion_id"] == ("INTEGER", "REQUIRED")
+    assert types["tags"] == ("STRING", "REPEATED")
+
+
+def test_load_season_returns_the_number_of_rows_loaded(saison):
+    assert load_season(FakeBigQuery()) == 4

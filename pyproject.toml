@@ -5,6 +5,7 @@ description = "Meta de League of Legends : ladder EUW et competition pro, sur GC
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "google-cloud-bigquery>=3.46.2",
     "requests>=2.34.2",
 ]
 
@@ -14,7 +15,7 @@ line-length = 88
 # Ou vit le code du projet : sans cette ligne, ruff classe les modules de
 # ingestion/ parmi les bibliotheques externes et range mal les imports.
 # Meme dossier que le pythonpath de pytest, plus bas.
-src = ["ingestion"]
+src = ["ingestion", "tests"]
 
 [tool.ruff.lint]
 # F  : erreurs reelles (import inutilise, variable non definie)
