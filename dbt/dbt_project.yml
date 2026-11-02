@@ -17,3 +17,17 @@ models:
     # les calculer une fois evite de relire le brut a chaque lecture.
     marts:
       +materialized: table
+
+vars:
+  # Duree minimale d'une partie du ladder pour compter dans la meta. Le vote
+  # d'abandon normal s'ouvre a 15 min : une partie finie avant est un remake ou
+  # un abandon apres un AFK, et ne dit rien des champions. Mesure du 02/11 sur
+  # 30 parties : les trois plus courtes durent 476 s, 549 s, puis 923 s.
+  # A reverifier sur la distribution des durees quand le ladder aura grossi.
+  ladder_min_game_duration_s: 900
+
+  # Prix minimal d'un objet TERMINE (compte dans un build). Distribution des
+  # prix des objets finaux de la Faille au patch 16.21 : objets de depart,
+  # objets de support ameliores, bottes (1 000 a 1 250) et Mejai (1 500) sous
+  # 1 750 ; AUCUN objet entre 1 750 et 2 000 ; les legendaires de 2 000 a 3 500.
+  completed_item_min_gold: 2000

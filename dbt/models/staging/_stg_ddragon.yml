@@ -31,3 +31,27 @@ models:
       - dbt_utils.unique_combination_of_columns:
           arguments:
             combination_of_columns: [champion_name, patch_key]
+
+  - name: stg_ddragon__items
+    description: >
+      Les objets, un par patch. is_completed = l'objet compte dans un build
+      (termine, sur la Faille, au moins completed_item_min_gold pieces d'or).
+    columns:
+      - name: item_id
+        data_tests: [not_null]
+      - name: patch_key
+        data_tests: [not_null]
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [item_id, patch_key]
+
+  - name: stg_ddragon__runes
+    description: Les runes, une par patch, avec leur arbre et leur rangee.
+    columns:
+      - name: rune_id
+        data_tests: [not_null]
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [rune_id, patch_key]

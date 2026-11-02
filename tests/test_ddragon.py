@@ -3,9 +3,17 @@ import requests
 
 import ddragon
 from ddragon import (
+    ITEMS_TABLE,
+    RUNES_TABLE,
     fetch_champions,
+    fetch_items,
+    fetch_runes,
     fetch_versions,
     flatten_champions,
+    flatten_items,
+    flatten_runes,
+    load_items_season,
+    load_runes_season,
     load_season,
     loaded_versions,
     missing_versions,
@@ -342,3 +350,218 @@ def test_load_season_does_nothing_when_up_to_date(saison):
 
     assert load_season(client) == 0
     assert client.appels == []
+
+
+# --- objets : flatten_items -------------------------------------------------
+
+ITEMS = {
+    "type": "item",
+    "version": "16.21.1",
+    "data": {
+        # Un composant : il se transforme en Lame d'infini.
+        "1038": {
+            "name": "B. F. Sword",
+            "gold": {"base": 1300, "purchasable": True, "total": 1300, "sell": 910},
+            "into": ["3031"],
+            "maps": {"11": True, "12": True},
+            "tags": ["Damage"],
+        },
+        # Un objet termine : il ne se transforme en rien.
+        "3031": {
+            "name": "Infinity Edge",
+            "gold": {"base": 625, "purchasable": True, "total": 3450, "sell": 2415},
+            "from": ["1038", "1018"],
+            "depth": 3,
+            "maps": {"11": True, "12": True},
+            "tags": ["Damage", "CriticalStrike"],
+        },
+        # La variante Arena : absente de la Faille, sans champ "tags".
+        "223031": {
+            "name": "Infinity Edge",
+            "gold": {"base": 625, "purchasable": True, "total": 3450, "sell": 2415},
+            "maps": {"11": False, "30": True},
+        },
+    },
+}
+
+
+def objet(lignes, item_id):
+    [ligne] = [ligne for ligne in lignes if ligne["item_id"] == item_id]
+    return ligne
+
+
+def test_flatten_items_gives_one_row_per_item_with_a_numeric_id():
+    lignes = flatten_items(ITEMS)
+
+    assert sorted(ligne["item_id"] for ligne in lignes) == [1038, 3031, 223031]
+
+
+def test_flatten_items_stamps_every_row_with_its_patch():
+    for ligne in flatten_items(ITEMS):
+        assert (ligne["patch"], ligne["version"]) == ("16.21", "16.21.1")
+
+
+def test_flatten_items_tells_a_component_from_a_completed_item():
+    """La B.F. Sword se transforme en Lame d'infini ; la Lame d'infini, en rien.
+    C'est ce qui permettra de reperer les objets termines d'un build."""
+    lignes = flatten_items(ITEMS)
+
+    assert objet(lignes, 1038)["builds_into"] == [3031]
+    assert objet(lignes, 3031)["builds_into"] == []
+    assert objet(lignes, 3031)["builds_from"] == [1038, 1018]
+
+
+def test_flatten_items_keeps_name_price_and_tags():
+    lame = objet(flatten_items(ITEMS), 3031)
+
+    assert lame["item_name"] == "Infinity Edge"
+    assert lame["gold_total"] == 3450
+    assert lame["purchasable"] is True
+    assert lame["depth"] == 3
+    assert lame["tags"] == ["Damage", "CriticalStrike"]
+
+
+def test_flatten_items_flags_the_items_of_summoners_rift():
+    """La carte 11 est la Faille de l'invocateur. La variante Arena n'y est pas."""
+    lignes = flatten_items(ITEMS)
+
+    assert objet(lignes, 3031)["on_summoners_rift"] is True
+    assert objet(lignes, 223031)["on_summoners_rift"] is False
+
+
+def test_flatten_items_tolerates_missing_optional_fields():
+    """Pas de "tags", "into", "from" ni "depth" : des valeurs vides, pas d'erreur."""
+    arena = objet(flatten_items(ITEMS), 223031)
+
+    assert arena["tags"] == []
+    assert arena["builds_into"] == []
+    assert arena["depth"] is None
+
+
+# --- runes : flatten_runes --------------------------------------------------
+
+RUNES = [
+    {
+        "id": 8100,
+        "key": "Domination",
+        "name": "Domination",
+        "slots": [
+            {"runes": [{"id": 8112, "key": "Electrocute", "name": "Electrocute"}]},
+            {"runes": [{"id": 8139, "key": "TasteOfBlood", "name": "Taste of Blood"}]},
+        ],
+    },
+    {
+        "id": 8300,
+        "key": "Inspiration",
+        "name": "Inspiration",
+        "slots": [
+            {
+                "runes": [
+                    {"id": 8351, "key": "GlacialAugment", "name": "Glacial Augment"}
+                ]
+            },
+        ],
+    },
+]
+
+
+def test_flatten_runes_gives_one_row_per_rune_with_its_tree():
+    lignes = flatten_runes("16.21.1", RUNES)
+
+    assert [(ligne["rune_name"], ligne["tree_name"]) for ligne in lignes] == [
+        ("Electrocute", "Domination"),
+        ("Taste of Blood", "Domination"),
+        ("Glacial Augment", "Inspiration"),
+    ]
+
+
+def test_flatten_runes_numbers_the_rows_of_a_tree_keystone_first():
+    """La rangee 0 d'un arbre contient les runes principales (Electrocution)."""
+    lignes = flatten_runes("16.21.1", RUNES)
+
+    assert [(ligne["rune_id"], ligne["slot"]) for ligne in lignes] == [
+        (8112, 0),
+        (8139, 1),
+        (8351, 0),
+    ]
+    assert lignes[0]["tree_id"] == 8100
+
+
+def test_flatten_runes_stamps_every_row_with_its_patch():
+    """runesReforged.json ne contient pas sa version : on la passe en parametre."""
+    for ligne in flatten_runes("16.21.1", RUNES):
+        assert (ligne["patch"], ligne["version"]) == ("16.21", "16.21.1")
+
+
+# --- fetch_items / fetch_runes ----------------------------------------------
+
+
+def test_fetch_items_requests_the_english_item_file_of_the_version(http):
+    url = f"{CDN}/16.21.1/data/en_US/item.json"
+    http.reponses[url] = FakeResponse(ITEMS)
+
+    assert fetch_items("16.21.1") == ITEMS
+
+
+def test_fetch_items_refuses_a_file_of_another_version(http):
+    http.reponses[f"{CDN}/16.20.1/data/en_US/item.json"] = FakeResponse(ITEMS)
+
+    with pytest.raises(ValueError):
+        fetch_items("16.20.1")
+
+
+def test_fetch_runes_requests_the_runes_file_of_the_version(http):
+    http.reponses[f"{CDN}/16.21.1/data/en_US/runesReforged.json"] = FakeResponse(RUNES)
+
+    assert fetch_runes("16.21.1") == RUNES
+
+
+# --- load_items_season / load_runes_season ----------------------------------
+
+
+@pytest.fixture
+def referentiels(saison):
+    """Les objets et les runes des deux patches de la saison miniature."""
+    for version in ("16.2.1", "16.1.1"):
+        base = f"{CDN}/{version}/data/en_US"
+        saison.reponses[f"{base}/item.json"] = FakeResponse(
+            {**ITEMS, "version": version}
+        )
+        saison.reponses[f"{base}/runesReforged.json"] = FakeResponse(RUNES)
+    return saison
+
+
+def test_load_items_season_loads_only_the_new_patches_into_the_items_table(
+    referentiels,
+):
+    client = FakeBigQuery(resultat_requete=[{"version": "16.1.1"}])
+
+    assert load_items_season(client) == 3
+
+    [sql] = client.requetes
+    assert ITEMS_TABLE in sql
+    [(rows, destination, _)] = client.appels
+    assert destination == ITEMS_TABLE
+    assert {row["patch"] for row in rows} == {"16.2"}
+
+
+def test_load_runes_season_loads_every_missing_patch_into_the_runes_table(
+    referentiels,
+):
+    client = FakeBigQuery(table_absente=True)
+
+    assert load_runes_season(client) == 2 * 3
+
+    [(_, destination, config)] = client.appels
+    assert destination == RUNES_TABLE
+    types = {champ.name: champ.field_type for champ in config.schema}
+    assert types["rune_id"] == "INTEGER"
+
+
+def test_loaded_versions_reads_the_table_it_is_given():
+    client = FakeBigQuery(resultat_requete=[])
+
+    loaded_versions(client, ITEMS_TABLE)
+
+    [sql] = client.requetes
+    assert ITEMS_TABLE in sql

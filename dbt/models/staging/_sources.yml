@@ -17,3 +17,32 @@ sources:
           Le fichier de la saison d'Oracle's Elixir, remplace a chaque chargement.
           12 lignes par match (10 joueurs + 2 lignes equipe), 165 colonnes, TOUTES
           en texte. Le patch y est ecrit sur deux chiffres : 16.01.
+
+      - name: ddragon_items
+        description: >
+          Un objet par patch de la saison, depuis item.json (en_US), variantes
+          Arena comprises. Ajout a chaque chargement de patch.
+
+      - name: ddragon_runes
+        description: >
+          Une rune par patch de la saison, depuis runesReforged.json (en_US),
+          avec son arbre et sa rangee (0 = runes principales).
+
+  - name: lol_raw_ladder
+    description: >
+      Ladder EUW (Challenger + Grandmaster, classee solo), charge chaque jour par
+      ingestion/ladder.py. Trois tables partitionnees par jour sur game_start,
+      partitions expirees apres 60 jours. Aucun identifiant de joueur.
+      Le brut accepte les doublons (un lot recharge apres une panne) : le
+      staging les retire.
+    tables:
+      - name: participants
+        description: >
+          Une ligne par joueur et par partie. Chargee EN DERNIER par le
+          collecteur : une partie presente ici a ses timelines en base.
+      - name: timeline_frames
+        description: Une photo par joueur et par minute (or, XP, niveau, sbires).
+      - name: timeline_events
+        description: >
+          Les evenements utiles (achats, sorts, kills, objectifs, tourelles),
+          numerotes par leur rang dans toute la timeline (event_index).

@@ -1,0 +1,63 @@
+version: 2
+
+# Les tests d'unicite sont en ERREUR (severite par defaut), comme le demande
+# le cahier des charges : un doublon fausserait chaque taux de victoire.
+
+models:
+  - name: stg_ladder__participants
+    description: >
+      Une ligne par joueur et par partie classee du ladder EUW. Dedoublonnee,
+      patch_key commune, remakes et parties de moins de 15 min ecartes.
+    columns:
+      - name: match_id
+        data_tests: [not_null]
+      - name: patch_key
+        data_tests: [not_null]
+      - name: champion_id
+        data_tests: [not_null]
+      - name: team_position
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [TOP, JUNGLE, MIDDLE, BOTTOM, UTILITY]
+              config:
+                severity: warn
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [match_id, participant_id]
+      # Les matchups cherchent le vis-a-vis par poste : deux MIDDLE dans la meme
+      # equipe donneraient deux adversaires a un seul joueur.
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [match_id, team_id, team_position]
+          config:
+            severity: warn
+
+  - name: stg_ladder__frames
+    description: Une photo par joueur et par minute des parties gardees.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [match_id, frame_index, participant_id]
+
+  - name: stg_ladder__events
+    description: Les evenements utiles des parties gardees.
+    columns:
+      - name: event_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values:
+                  - ITEM_PURCHASED
+                  - ITEM_SOLD
+                  - ITEM_UNDO
+                  - SKILL_LEVEL_UP
+                  - CHAMPION_KILL
+                  - ELITE_MONSTER_KILL
+                  - BUILDING_KILL
+                  - TURRET_PLATE_DESTROYED
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [match_id, event_index]

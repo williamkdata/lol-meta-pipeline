@@ -2,7 +2,7 @@
 
 Pipeline de données sur la meta de *League of Legends* : quels champions, builds et runes performent par matchup et par patch, comment se jouent les timings d'avantage — et combien de temps met un pick vu en compétition professionnelle à descendre sur la ladder haut elo.
 
-> **En construction — étapes 1 à 6 sur 9.** Les trois sources sont collectées chaque jour par Airflow et chargées dans BigQuery ; la meta pro par patch est modélisée en dbt. Prochaine étape : les marts du ladder (matchups, builds, runes, timings).
+> **En construction — étapes 1 à 7 sur 9.** Les trois sources sont collectées chaque jour par Airflow et chargées dans BigQuery ; dbt en tire la meta pro et la meta du ladder par patch : champions, matchups, timings d'avantage, builds et runes, chaque taux de victoire avec sa fourchette de confiance. Prochaine étape : la diffusion de la meta, du pro vers le ladder.
 
 ## Sources
 
@@ -10,7 +10,7 @@ Pipeline de données sur la meta de *League of Legends* : quels champions, build
 |---|---|---|---|
 | Ladder EUW | API Riot Games (Challenger + Grandmaster, classée solo) | quotidienne | clé *personal* |
 | Compétition pro | Oracle's Elixir | quotidienne | fichier public, via l'API Google Drive |
-| Référentiel | Data Dragon | à chaque patch | public, sans clé |
+| Référentiel | Data Dragon (champions, objets, runes) | à chaque patch | public, sans clé |
 
 Le temps réel des matchs professionnels n'est pas accessible : il passe par un portail réservé aux équipes et partenaires de Riot. Oracle's Elixir en est lui-même en aval.
 
@@ -36,9 +36,21 @@ API Riot ─────────┘    brut gzip,        lol_raw (permanent)
 | 4 | dbt : staging + mart de la meta pro par patch ; Airflow quotidien | ✅ |
 | 5 | Client de l'API Riot : limiteur de débit, 429, clé hors du code | ✅ |
 | 6 | Collecte du ladder, timelines aplaties, volume mesuré | ✅ |
-| 7 | Marts du ladder : matchups, builds, runes, timings | à venir |
+| 7 | Marts du ladder : matchups, builds, runes, timings | ✅ |
 | 8 | Mart de diffusion de la meta, pro → ladder | à venir |
 | 9 | Coûts mesurés sur la durée, limites, bilan | à venir |
+
+## Les marts
+
+| Table | Question | Grain |
+|---|---|---|
+| `mart_pro_champion_patch` | Quels champions comptent en pro ? Picks, bans, présence, victoires | patch × champion |
+| `mart_ladder_champion_patch` | Quels champions gagnent sur la ladder haut elo ? | patch × poste × champion |
+| `mart_ladder_matchups` | Qui bat qui dans sa voie, et avec quelle avance d'or, d'XP et de sbires à 10 et 15 minutes ? | patch × poste × champion × adversaire |
+| `mart_ladder_builds` | Quels deux premiers objets terminés, dans quel ordre, et avec quel résultat ? | patch × poste × champion × chemin |
+| `mart_ladder_runes` | Quelle page de runes (rune principale + arbres) ? | patch × poste × champion × page |
+
+Chaque taux de victoire du ladder est accompagné de sa **fourchette à 95 %** (`win_rate_low`, `win_rate_high`).
 
 ## Choix notables
 
@@ -53,6 +65,15 @@ API Riot ─────────┘    brut gzip,        lol_raw (permanent)
 **Le brut d'abord, dans le bucket.** Les requêtes à l'API Riot sont la ressource rare. Chaque partie et sa timeline sont déposées en JSON Lines compressé avant tout traitement : changer d'avis sur les champs gardés ne coûte aucune requête.
 
 **Un chargement qui reprend proprement.** Les parties sont traitées par lots de 50 ; la table des joueurs est chargée en dernier et sert de marqueur de fin. Un run interrompu ne laisse aucune partie à moitié marquée comme collectée, et le run suivant ne retélécharge que ce qui manque.
+
+**Des taux de victoire avec leur fourchette.** 3 victoires sur 4 font 75 %, mais ne disent presque rien. Chaque taux du ladder est accompagné de son intervalle de Wilson à 95 %, écrit une seule fois dans une macro dbt et figé par un test unitaire (3 sur 4 → [0,301 ; 0,954]). Un résultat est retenu comme significatif quand sa fourchette exclut 50 % ; le volume minimal découle de la largeur de fourchette acceptée, pas d'un nombre choisi au hasard.
+
+**Des seuils tirés des distributions observées.**
+- Une partie compte à partir de **15 minutes** : le vote d'abandon s'ouvre à 15 minutes, et les trois parties les plus courtes du premier échantillon durent 7 min 56 s, 9 min 09 s puis 15 min 23 s. Avant, c'est un remake ou un abandon après un AFK.
+- Un objet compte dans un build à partir de **2 000 pièces d'or** : la distribution des prix des objets finaux montre un trou entre 1 750 et 2 000, qui sépare les légendaires des bottes et objets de départ.
+- Les deux seuils sont des variables dbt, justifiées dans `dbt_project.yml`, et seront revérifiés sur un patch complet de données.
+
+**L'ordre des builds vient de la timeline.** Une partie ne donne que l'inventaire final. L'ordre des achats vient des événements de la timeline, achats annulés exclus (6 annulations d'objets terminés dans les 28 premières parties). Un test unitaire dbt fige le cas : Lame d'infini achetée puis annulée, Collector, Lame rachetée → chemin « Collector puis Lame ».
 
 **Des tests sur les données, pas seulement sur le code.**
 - `SAFE_CAST` ne plante jamais : une valeur non convertible devient `NULL` en silence. Un test singulier vérifie qu'aucune valeur non vide n'est perdue à la conversion (0 sur 10 colonnes).

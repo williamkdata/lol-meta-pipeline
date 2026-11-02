@@ -26,3 +26,141 @@ models:
       - dbt_utils.unique_combination_of_columns:
           arguments:
             combination_of_columns: [patch_key, champion_name]
+
+  - name: mart_ladder_champion_patch
+    description: >
+      Meta du ladder EUW par patch, poste et champion : parties, victoires, taux
+      de victoire avec sa fourchette (intervalle de Wilson a 95 %), taux de pick.
+    columns:
+      - name: champion_name
+        description: Vide si Data Dragon n'a pas encore ce champion pour ce patch.
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
+      - name: pick_rate
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [patch_key, team_position, champion_id]
+      # La fourchette doit encadrer le taux observe : sinon la macro est fausse.
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "win_rate_low <= win_rate AND win_rate <= win_rate_high"
+
+  - name: mart_ladder_matchups
+    description: >
+      Chaque champion contre son vis-a-vis (meme poste, equipe adverse), par
+      patch : taux de victoire avec fourchette, ecarts moyens d'or a 10 et 15
+      min, d'XP et de sbires a 10 min. Chaque duel apparait dans les deux sens.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              [patch_key, team_position, champion_id, opponent_champion_id]
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "win_rate_low <= win_rate AND win_rate <= win_rate_high"
+
+  - name: mart_ladder_runes
+    description: >
+      Pages de runes par champion, poste et patch : part des parties du champion,
+      taux de victoire avec fourchette.
+    columns:
+      - name: share_of_champion_games
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              [patch_key, team_position, champion_id, keystone_id, primary_style, sub_style]
+
+  - name: mart_ladder_builds
+    description: >
+      Chemins de build par champion, poste et patch : les deux premiers objets
+      termines achetes (ordre tire de la timeline, achats annules exclus), part
+      des parties du champion, taux de victoire avec fourchette.
+    columns:
+      - name: first_item_name
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
+      - name: share_of_champion_games
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              [patch_key, team_position, champion_id, first_item_id, second_item_id]
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "win_rate_low <= win_rate AND win_rate <= win_rate_high"
+
+unit_tests:
+  # Le calcul de la fourchette, fige sur un cas verifie a la main : Ahri mid,
+  # 3 victoires sur 4 -> Wilson 95 % = [0,3006 ; 0,9544].
+  - name: wilson_interval_on_three_wins_out_of_four
+    model: mart_ladder_champion_patch
+    given:
+      - input: ref('stg_ladder__participants')
+        rows:
+          - {match_id: "EUW1_1", patch_key: 1621, team_position: MIDDLE, champion_id: 103, is_win: true}
+          - {match_id: "EUW1_2", patch_key: 1621, team_position: MIDDLE, champion_id: 103, is_win: true}
+          - {match_id: "EUW1_3", patch_key: 1621, team_position: MIDDLE, champion_id: 103, is_win: true}
+          - {match_id: "EUW1_4", patch_key: 1621, team_position: MIDDLE, champion_id: 103, is_win: false}
+      - input: ref('stg_ddragon__champions')
+        rows:
+          - {patch_key: 1621, champion_id: 103, champion_name: Ahri}
+    expect:
+      rows:
+        - {patch_key: 1621, team_position: MIDDLE, champion_id: 103, champion_name: Ahri,
+           matches: 4, games: 4, wins: 3, win_rate: 0.75,
+           win_rate_low: 0.3006, win_rate_high: 0.9544, pick_rate: 1.0}
+
+  # L'ordre du build et l'achat annule : Jinx achete la Lame d'infini (3031),
+  # l'annule 10 s plus tard, achete Collector (6676), puis rachete la Lame.
+  # Le chemin doit etre Collector puis Lame, pas Lame puis Collector.
+  - name: build_path_ignores_an_undone_purchase
+    model: mart_ladder_builds
+    given:
+      - input: ref('stg_ladder__participants')
+        rows:
+          - {match_id: "EUW1_1", participant_id: 4, patch_key: 1621,
+             team_position: BOTTOM, champion_id: 222, is_win: true}
+      - input: ref('stg_ddragon__items')
+        rows:
+          - {patch_key: 1621, item_id: 3031, item_name: "Infinity Edge", is_completed: true}
+          - {patch_key: 1621, item_id: 6676, item_name: "The Collector", is_completed: true}
+          - {patch_key: 1621, item_id: 1038, item_name: "B. F. Sword", is_completed: false}
+      - input: ref('stg_ladder__events')
+        rows:
+          - {match_id: "EUW1_1", participant_id: 4, event_type: ITEM_PURCHASED,
+             item_id: 1038, before_item_id: null, timestamp_ms: 400000}
+          - {match_id: "EUW1_1", participant_id: 4, event_type: ITEM_PURCHASED,
+             item_id: 3031, before_item_id: null, timestamp_ms: 600000}
+          - {match_id: "EUW1_1", participant_id: 4, event_type: ITEM_UNDO,
+             item_id: null, before_item_id: 3031, timestamp_ms: 610000}
+          - {match_id: "EUW1_1", participant_id: 4, event_type: ITEM_PURCHASED,
+             item_id: 6676, before_item_id: null, timestamp_ms: 900000}
+          - {match_id: "EUW1_1", participant_id: 4, event_type: ITEM_PURCHASED,
+             item_id: 3031, before_item_id: null, timestamp_ms: 1300000}
+    expect:
+      rows:
+        - {patch_key: 1621, team_position: BOTTOM, champion_id: 222,
+           first_item_id: 6676, first_item_name: "The Collector",
+           second_item_id: 3031, second_item_name: "Infinity Edge",
+           games: 1, wins: 1, share_of_champion_games: 1.0, win_rate: 1.0}
