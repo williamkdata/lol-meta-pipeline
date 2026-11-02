@@ -1,6 +1,7 @@
 """Client Data Dragon : le referentiel des champions, objets et runes, par patch."""
 
 import requests
+from google.api_core.exceptions import NotFound
 from google.cloud import bigquery
 
 from bigquery_loader import load_rows
@@ -92,10 +93,32 @@ def season_versions(versions: list[str]) -> list[str]:
     return retenues
 
 
+def missing_versions(saison: list[str], deja_chargees: set[str]) -> list[str]:
+    """Les versions de la saison qui ne sont pas encore dans BigQuery."""
+    manquantes = []
+    for version in saison:
+        if version not in deja_chargees:
+            manquantes.append(version)
+    return manquantes
+
+
+def loaded_versions(client) -> set[str]:
+    """Les versions deja presentes dans la table. Vide si la table n'existe pas."""
+    sql = f"SELECT DISTINCT version FROM `{CHAMPIONS_TABLE}`"
+    try:
+        lignes = client.query(sql).result()
+    except NotFound:
+        return set()
+    return {ligne["version"] for ligne in lignes}
+
+
 def load_season(client) -> int:
-    """Charge les champions de tous les patches de la saison en cours."""
+    """Charge les champions des patches de la saison PAS ENCORE charges."""
+    a_charger = missing_versions(
+        season_versions(fetch_versions()), loaded_versions(client)
+    )
     lignes = []
-    for version in season_versions(fetch_versions()):
+    for version in a_charger:
         lignes.extend(flatten_champions(fetch_champions(version)))
     return load_rows(lignes, CHAMPIONS_TABLE, CHAMPIONS_SCHEMA, client)
 

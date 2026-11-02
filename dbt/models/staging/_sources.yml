@@ -1,0 +1,19 @@
+version: 2
+
+sources:
+  - name: lol_raw
+    description: >
+      Brut permanent, charge par les scripts de ingestion/. Fidele a la source :
+      aucune correction ici, tout se fait dans le staging.
+    tables:
+      - name: ddragon_champions
+        description: >
+          Un champion par patch de la saison, depuis champion.json (en_US).
+          Ajout a chaque chargement : un patch peut apparaitre plusieurs fois.
+          Contient les 60 entrees speciales Jade_ du patch 16.15.
+
+      - name: oe_matches
+        description: >
+          Le fichier de la saison d'Oracle's Elixir, remplace a chaque chargement.
+          12 lignes par match (10 joueurs + 2 lignes equipe), 165 colonnes, TOUTES
+          en texte. Le patch y est ecrit sur deux chiffres : 16.01.

@@ -7,6 +7,8 @@ from ddragon import (
     fetch_versions,
     flatten_champions,
     load_season,
+    loaded_versions,
+    missing_versions,
     patch_of,
     season_versions,
 )
@@ -288,3 +290,55 @@ def test_load_season_imposes_the_champions_schema(saison):
 
 def test_load_season_returns_the_number_of_rows_loaded(saison):
     assert load_season(FakeBigQuery()) == 4
+
+
+# --- missing_versions / loaded_versions -------------------------------------
+
+
+def test_missing_versions_skips_the_versions_already_loaded():
+    saison = ["16.3.1", "16.2.1", "16.1.1"]
+
+    assert missing_versions(saison, {"16.1.1", "16.2.1"}) == ["16.3.1"]
+
+
+def test_missing_versions_returns_everything_on_a_first_run():
+    assert missing_versions(["16.2.1", "16.1.1"], set()) == ["16.2.1", "16.1.1"]
+
+
+def test_loaded_versions_reads_the_distinct_versions_of_the_table():
+    client = FakeBigQuery(
+        resultat_requete=[{"version": "16.1.1"}, {"version": "16.2.1"}]
+    )
+
+    assert loaded_versions(client) == {"16.1.1", "16.2.1"}
+    [sql] = client.requetes
+    assert "DISTINCT version" in sql
+    assert "lol-meta-pipeline.lol_raw.ddragon_champions" in sql
+
+
+def test_loaded_versions_is_empty_when_the_table_does_not_exist_yet():
+    """Tout premier lancement : la table n'existe pas encore. Ce n'est pas une
+    erreur, c'est simplement qu'aucune version n'a ete chargee."""
+    assert loaded_versions(FakeBigQuery(table_absente=True)) == set()
+
+
+def test_load_season_loads_only_the_new_patches(saison):
+    """16.1 est deja dans BigQuery : seul 16.2 est telecharge et charge."""
+    client = FakeBigQuery(resultat_requete=[{"version": "16.1.1"}])
+
+    assert load_season(client) == 2
+
+    [(rows, _, _)] = client.appels
+    assert {row["patch"] for row in rows} == {"16.2"}
+    urls = [url for url, _ in saison.appels]
+    assert champions_url("16.1.1") not in urls
+
+
+def test_load_season_does_nothing_when_up_to_date(saison):
+    """Les jours sans nouveau patch, aucun telechargement, aucun chargement."""
+    client = FakeBigQuery(
+        resultat_requete=[{"version": "16.2.1"}, {"version": "16.1.1"}]
+    )
+
+    assert load_season(client) == 0
+    assert client.appels == []

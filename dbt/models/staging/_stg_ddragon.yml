@@ -1,0 +1,33 @@
+version: 2
+
+models:
+  - name: stg_ddragon__champions
+    description: >
+      Les vrais champions, un par patch. Les entrees speciales (code contenant un
+      _ , comme Jade_Ahri) sont ecartees. patch_key est l'entier commun a toutes
+      les sources : 16.1 et 16.01 deviennent tous deux 1601.
+    columns:
+      - name: patch_key
+        data_tests:
+          - not_null
+      - name: champion_id
+        data_tests:
+          - not_null
+      - name: champion_name
+        data_tests:
+          - not_null
+
+    data_tests:
+      # Le grain du modele : un champion par patch, sans doublon. Le brut, lui,
+      # en contient si un patch a ete charge deux fois.
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [champion_id, patch_key]
+
+      # LE FILET DE SECURITE des entrees speciales. Les donnees pro se joignent
+      # par NOM : si un nom apparaissait deux fois dans un patch, chaque pick de
+      # ce champion serait compte deux fois. Si un futur evenement change de
+      # prefixe et passe a travers le filtre, c'est ce test qui cassera.
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [champion_name, patch_key]

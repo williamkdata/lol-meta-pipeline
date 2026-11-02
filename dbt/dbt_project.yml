@@ -6,3 +6,14 @@ model-paths: ["models"]
 test-paths: ["tests"]
 
 clean-targets: ["target", "dbt_packages"]
+
+models:
+  lol_meta:
+    # Staging : des vues. Elles ne stockent rien, ne coutent rien en
+    # stockage, et refletent toujours le brut le plus recent.
+    staging:
+      +materialized: view
+    # Marts : des tables. Elles sont lues souvent (dashboard, analyses) ;
+    # les calculer une fois evite de relire le brut a chaque lecture.
+    marts:
+      +materialized: table

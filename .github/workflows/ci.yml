@@ -28,6 +28,12 @@ jobs:
 
       - run: uv run pytest
 
+      # dbt_packages/ est ignore par git : un runner neuf ne l'a pas. Sans cette
+      # etape, dbt parse echouerait sur une macro dbt_utils introuvable (vecu
+      # sur le projet 2). package-lock.yml fige la version installee.
+      - name: Install dbt packages
+        run: uv run dbt deps --project-dir dbt
+
       # Aucun identifiant cloud dans la CI : dbt parse verifie la syntaxe, les
       # ref() et les source() SANS se connecter a BigQuery.
       - name: Validate dbt syntax

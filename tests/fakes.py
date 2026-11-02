@@ -12,10 +12,11 @@ class FakeResponse:
     `data` est ce que renvoie .json() ; `content` les octets bruts d'un fichier
     telecharge."""
 
-    def __init__(self, data=None, status_code=200, content=b""):
+    def __init__(self, data=None, status_code=200, content=b"", headers=None):
         self._data = data
         self.status_code = status_code
         self.content = content
+        self.headers = headers or {}
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -39,7 +40,12 @@ class FakeHttp:
 
     def get(self, url, **options):
         self.appels.append((url, options))
-        return self.reponses.get(url, self.reponse)
+        reponse = self.reponses.get(url, self.reponse)
+        # Une LISTE de reponses pour une meme URL : renvoyees dans l'ordre (un
+        # 429 puis un succes, par exemple). La derniere est repetee ensuite.
+        if isinstance(reponse, list):
+            return reponse.pop(0) if len(reponse) > 1 else reponse[0]
+        return reponse
 
 
 class FakeJob:
@@ -54,14 +60,37 @@ class FakeJob:
         return self
 
 
+class FakeQueryJob:
+    def __init__(self, lignes):
+        self._lignes = lignes
+
+    def result(self):
+        return list(self._lignes)
+
+
 class FakeBigQuery:
     """Remplace le client BigQuery : aucun appel reel. On peut lui faire
     annoncer un nombre de lignes chargees different de celui envoye."""
 
-    def __init__(self, lignes_annoncees=None):
+    def __init__(
+        self, lignes_annoncees=None, resultat_requete=None, table_absente=False
+    ):
         self.lignes_annoncees = lignes_annoncees
         self.appels = []
         self.job = None
+        self.requetes = []
+        self._resultat_requete = resultat_requete or []
+        self._table_absente = table_absente
+
+    def query(self, sql):
+        """Une requete SQL : renvoie les lignes reglees a l'avance, ou leve
+        NotFound pour simuler une table qui n'existe pas encore."""
+        self.requetes.append(sql)
+        if self._table_absente:
+            from google.api_core.exceptions import NotFound
+
+            raise NotFound("table absente")
+        return FakeQueryJob(self._resultat_requete)
 
     def load_table_from_json(self, rows, destination, job_config=None):
         self.appels.append((rows, destination, job_config))
@@ -120,3 +149,14 @@ class FakeStorage:
 
     def bucket(self, nom):
         return FakeBucket(nom, self)
+
+
+class FakeLimiter:
+    """Remplace le limiteur de debit : ne fait jamais attendre, compte les
+    passages."""
+
+    def __init__(self):
+        self.passages = 0
+
+    def attendre_son_tour(self):
+        self.passages += 1

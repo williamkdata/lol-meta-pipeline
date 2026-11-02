@@ -1,0 +1,45 @@
+version: 2
+
+models:
+  - name: stg_oe__players
+    description: >
+      Une ligne par joueur et par match pro (10 par match). Types appliques par
+      SAFE_CAST. patch_key = cle de patch commune a toutes les sources.
+    columns:
+      - name: game_id
+        data_tests: [not_null]
+      - name: patch_key
+        data_tests: [not_null]
+      - name: champion_name
+        data_tests: [not_null]
+      - name: played_at
+        data_tests: [not_null]
+      - name: position
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [top, jng, mid, bot, sup]
+    data_tests:
+      # Le grain. Pas de QUALIFY dans ce modele : le fichier est remplace a
+      # chaque chargement et n'a jamais contenu de doublon (mesure : 98 230
+      # couples pour 98 230 lignes). Ce test garantit que ca reste vrai.
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [game_id, participant_id]
+
+  - name: stg_oe__teams
+    description: Une ligne par equipe et par match pro (2 par match).
+    columns:
+      - name: game_id
+        data_tests: [not_null]
+      - name: patch_key
+        data_tests: [not_null]
+      - name: side
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [Blue, Red]
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [game_id, side]

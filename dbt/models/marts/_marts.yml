@@ -1,0 +1,28 @@
+version: 2
+
+models:
+  - name: mart_pro_champion_patch
+    description: >
+      Meta pro par patch et par champion : picks, victoires, bans, taux de
+      victoire, taux de pick, taux de ban, presence (pick ou ban). Source :
+      Oracle's Elixir ; champion_id : Data Dragon, joint par (nom, patch_key).
+    columns:
+      - name: champion_id
+        description: >
+          Vide si le champion n'a pas de ligne Data Dragon pour ce patch.
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
+      - name: presence
+        data_tests:
+          # Un champion ne peut pas etre a la fois pris et banni dans un meme
+          # match : la presence ne peut pas depasser 100 %.
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [patch_key, champion_name]
