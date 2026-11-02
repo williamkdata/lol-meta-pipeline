@@ -79,3 +79,25 @@ def test_load_rows_does_nothing_without_rows():
 
     assert load_rows([], TABLE, SCHEMA, client) == 0
     assert client.appels == []
+
+
+def test_load_rows_partitions_by_day_on_the_requested_column():
+    """Le dataset lol_raw_ladder fait expirer ses partitions apres 60 jours,
+    mais SEULEMENT si la table est partitionnee. Une table sans partitions y
+    garderait tout, pour toujours, sans aucun message."""
+    client = FakeBigQuery()
+
+    load_rows(ROWS, TABLE, SCHEMA, client, partition_field="game_start")
+
+    [(_, _, config)] = client.appels
+    assert config.time_partitioning.field == "game_start"
+    assert config.time_partitioning.type_ == bigquery.TimePartitioningType.DAY
+
+
+def test_load_rows_does_not_partition_unless_asked():
+    client = FakeBigQuery()
+
+    load_rows(ROWS, TABLE, SCHEMA, client)
+
+    [(_, _, config)] = client.appels
+    assert config.time_partitioning is None

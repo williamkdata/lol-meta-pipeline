@@ -44,6 +44,10 @@
 #
 # Feel free to modify this file to suit your needs.
 ---
+# Nom explicite : les conteneurs s'appellent lol-meta-pipeline-..., distincts
+# de ceux de Velib' (data-engineering-portfolio-...) qui tournent a cote.
+name: lol-meta-pipeline
+
 x-airflow-common:
   &airflow-common
   # In order to add custom dependencies or upgrade provider distributions you can use your extended image.
@@ -94,6 +98,11 @@ x-airflow-common:
     - ../secrets:/opt/airflow/secrets:ro
     - ../ingestion:/opt/airflow/ingestion
     - ../dbt:/opt/airflow/dbt
+    # La cle Riot n'existe qu'a un seul endroit : le .env a la racine du depot.
+    # Le fichier est MONTE en lecture seule (pas recopie, pas en variable
+    # d'environnement visible par docker inspect). read_api_key() le lit depuis
+    # /opt/airflow, le dossier ou les taches font leur cd.
+    - ../.env:/opt/airflow/.env:ro
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     &airflow-common-depends-on
@@ -136,7 +145,10 @@ services:
     <<: *airflow-common
     command: api-server
     ports:
-      - "8080:8080"
+      # 8081 sur le PC : le 8080 est pris par l'Airflow de Velib'.
+      # 127.0.0.1 : interface joignable depuis ce PC seulement, pas depuis le
+      # reseau local (le compte par defaut est airflow / airflow).
+      - "127.0.0.1:8081:8080"
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
       interval: 30s

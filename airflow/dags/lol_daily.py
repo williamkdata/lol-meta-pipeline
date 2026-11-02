@@ -1,6 +1,6 @@
-"""Pipeline LoL quotidien : Data Dragon + Oracle's Elixir, puis dbt.
+"""Pipeline LoL quotidien : Data Dragon + Oracle's Elixir + ladder EUW, puis dbt.
 
-    [ingest_ddragon, ingest_oracles_elixir] >> dbt_deps >> dbt_build
+    [ingest_ddragon, ingest_oracles_elixir, ingest_ladder] >> dbt_deps >> dbt_build
 
 Cadence : une fois par jour, a 14 h 30 UTC. Oracle's Elixir publie son fichier
 une fois par jour (observe : 13 h 05 UTC le 29/10/2026) et demande de ne pas
@@ -22,7 +22,7 @@ DBT_OPTIONS = f"--project-dir {DBT_DIR} --profiles-dir {DBT_DIR}/profiles --targ
 
 with DAG(
     dag_id="lol_daily",
-    description="Data Dragon + Oracle's Elixir -> dbt build (prod)",
+    description="Data Dragon + Oracle's Elixir + ladder EUW -> dbt build (prod)",
     schedule="30 14 * * *",
     start_date=datetime(2026, 11, 1),
     # Pas de rattrapage : rejouer les jours manques n'a pas de sens, les deux
@@ -48,6 +48,16 @@ with DAG(
         retry_delay=timedelta(hours=2),
     )
 
+    # Le ladder EUW par l'API Riot (cle personal) : ~1 100 requetes, ~35 min
+    # (mesure du 02/11 : ~2 s par requete). Un nouvel essai ne recollecte rien :
+    # les parties deja en base sont ecartees. Le plafond de 2 h evite qu'un run
+    # bloque tienne la place du suivant.
+    ingest_ladder = BashOperator(
+        task_id="ingest_ladder",
+        bash_command="cd /opt/airflow && python ingestion/ladder.py",
+        execution_timeout=timedelta(hours=2),
+    )
+
     # dbt_packages/ n'est pas versionne : on l'installe a chaque run.
     dbt_deps = BashOperator(
         task_id="dbt_deps",
@@ -59,4 +69,4 @@ with DAG(
         bash_command=f"dbt build {DBT_OPTIONS} --no-partial-parse --no-use-colors",
     )
 
-    [ingest_ddragon, ingest_oracles_elixir] >> dbt_deps >> dbt_build
+    [ingest_ddragon, ingest_oracles_elixir, ingest_ladder] >> dbt_deps >> dbt_build
