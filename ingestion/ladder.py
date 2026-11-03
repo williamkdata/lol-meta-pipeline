@@ -3,6 +3,8 @@ leurs timelines, deposees brutes dans le bucket, aplaties dans BigQuery."""
 
 import argparse
 import json
+import logging
+import math
 import os
 import time
 from datetime import UTC, datetime
@@ -15,6 +17,8 @@ from google.oauth2 import service_account
 from bigquery_loader import load_rows
 from landing import upload_to_gcs
 from riot import (
+    PLATEFORME,
+    REGION,
     RiotClient,
     fetch_match,
     fetch_timeline,
@@ -22,6 +26,8 @@ from riot import (
     match_ids,
     read_api_key,
 )
+
+journal = logging.getLogger(__name__)
 
 CLE_COMPTE_DE_SERVICE = os.environ.get("LOL_SA_KEY", "secrets/lol-pipeline-key.json")
 
@@ -323,9 +329,20 @@ def collect_ladder(
         "frames": 0,
         "evenements": 0,
     }
+    nombre_lots = math.ceil(len(a_prendre) / taille_lot)
+    journal.info(
+        "%d joueurs, %d identifiants recus, %d parties nouvelles, %d a prendre "
+        "en %d lots",
+        bilan["joueurs"],
+        bilan["ids_recus"],
+        bilan["disponibles"],
+        len(a_prendre),
+        nombre_lots,
+    )
     # "2026-11-02T15:00:00+00:00" -> dossier 2026-11-02, fichier 150000-000
     jour = ingere_le[:10]
     heure = ingere_le[11:19].replace(":", "")
+    depart = time.monotonic()
 
     for debut in range(0, len(a_prendre), taille_lot):
         lot = a_prendre[debut : debut + taille_lot]
@@ -379,6 +396,13 @@ def collect_ladder(
         bilan["participants"] += len(participants)
         bilan["frames"] += len(frames)
         bilan["evenements"] += len(evenements)
+        journal.info(
+            "lot %d/%d charge : %d parties (%.0f s depuis le debut des lots)",
+            numero + 1,
+            nombre_lots,
+            len(parties),
+            time.monotonic() - depart,
+        )
     return bilan
 
 
@@ -392,9 +416,16 @@ if __name__ == "__main__":
         CLE_COMPTE_DE_SERVICE,
         scopes=["https://www.googleapis.com/auth/cloud-platform"],
     )
+    # Le journal : l'heure, le niveau, le module, le message. Airflow le range
+    # dans le journal de la tache, lisible PENDANT le run.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s : %(message)s",
+    )
+    riot = RiotClient(read_api_key())
     maintenant = datetime.now(UTC)
     bilan = collect_ladder(
-        RiotClient(read_api_key()),
+        riot,
         storage.Client(project="lol-meta-pipeline", credentials=identite),
         bigquery.Client(project="lol-meta-pipeline", credentials=identite),
         depuis=int(time.time()) - FENETRE_S,
@@ -402,4 +433,12 @@ if __name__ == "__main__":
         max_joueurs=reglages.max_joueurs,
         max_parties=reglages.max_parties,
     )
-    print(f"bilan du run : {bilan}")
+    journal.info("bilan du run : %s", bilan)
+    # Pourquoi le run a dure ce qu'il a dure : attentes imposees par Riot (429)
+    # contre attentes de notre limiteur, region par region.
+    journal.info(
+        "client Riot : %s ; attente du limiteur : europe %.0f s, euw1 %.0f s",
+        riot.stats,
+        riot.limiteurs[REGION].attente_s,
+        riot.limiteurs[PLATEFORME].attente_s,
+    )

@@ -563,3 +563,16 @@ def test_collect_ladder_respects_the_budget_and_reports_what_it_left():
     assert bilan["parties"] == 2
     assert bilan["disponibles"] == 3
     assert bilan["ids_recus"] == 4
+
+
+def test_collect_ladder_logs_its_progress(caplog):
+    """Pendant un run de 35 minutes, le journal doit dire ou on en est :
+    la fin de la phase des listes, puis chaque lot."""
+    caplog.set_level("INFO")
+    riot = FakeRiot({"a": ["EUW1_1", "EUW1_2", "EUW1_3"]})
+
+    collecter(riot, taille_lot=2)
+
+    assert "3 parties nouvelles" in caplog.text
+    assert "lot 1/2" in caplog.text
+    assert "lot 2/2" in caplog.text

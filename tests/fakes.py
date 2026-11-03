@@ -157,6 +157,10 @@ class FakeLimiter:
 
     def __init__(self):
         self.passages = 0
+        self.retours = 0
 
     def attendre_son_tour(self):
         self.passages += 1
+
+    def marquer_retour(self):
+        self.retours += 1

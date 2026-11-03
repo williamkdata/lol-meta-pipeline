@@ -94,6 +94,38 @@ def test_rate_limiter_does_not_wait_when_calls_are_spaced_out():
     assert horloge.attentes == []
 
 
+def test_rate_limiter_adds_up_the_time_it_waited():
+    """Le temps passe a attendre dans le limiteur est compte : c'est ce qui
+    permet de dire, apres un run lent, si c'est NOUS qui avons freine."""
+    horloge = FakeClock()
+    rl = limiteur(horloge)
+
+    for _ in range(25):
+        rl.attendre_son_tour()
+
+    assert rl.attente_s == sum(horloge.attentes)
+    assert rl.attente_s > 0
+
+
+def test_rate_limiter_counts_a_request_from_when_its_answer_came_back():
+    """Riot date une requete a son ARRIVEE ; le limiteur la datait a son
+    DEPART. Le 03/11, la 1re connexion a mis ~10 s : Riot l'a vue 10 s plus
+    tard, et la 101e requete a recu un 429 (Retry-After : 11 s). Dater au
+    RETOUR de la reponse garantit de ne jamais etre en avance sur Riot."""
+    horloge = FakeClock()
+    rl = RateLimiter([(100, 120.0)], horloge=horloge.maintenant, dormir=horloge.dormir)
+
+    rl.attendre_son_tour()  # la 1re requete part a t = 1000...
+    horloge.t += 10  # ... et sa reponse revient 10 s plus tard
+    rl.marquer_retour()
+    for _ in range(99):
+        rl.attendre_son_tour()
+        rl.marquer_retour()
+    rl.attendre_son_tour()  # la 101e
+
+    assert horloge.t >= 1000 + 10 + 120.0
+
+
 def test_rate_limiter_refuses_an_empty_list_of_limits():
     with pytest.raises(ValueError):
         RateLimiter([])
@@ -284,3 +316,88 @@ def test_fetch_match_and_timeline_use_the_documented_paths():
 
     assert fetch_match(client, "EUW1_1") == {"m": 1}
     assert fetch_timeline(client, "EUW1_1") == {"t": 1}
+
+
+# --- ce que le client dit de lui-meme (statistiques et journal) -------------
+
+CHEMIN_IDS = "/lol/match/v5/matches/by-puuid/puuid-secret-123/ids"
+
+
+def test_get_counts_requests_429_and_the_time_riot_made_us_wait():
+    refus = FakeResponse(status_code=429, headers={"Retry-After": "7"})
+    client, _, _, _ = client_avec([refus, FakeResponse({"ok": True})])
+
+    client.get(REGION, CHEMIN)
+
+    assert client.stats["requetes"] == 2
+    assert client.stats["refus_429"] == 1
+    assert client.stats["attente_429_s"] == 7.0
+
+
+def test_get_records_the_limits_announced_by_riot():
+    """Riot annonce ses limites dans chaque reponse. Les noter verifie celles
+    que notre limiteur suppose (20 par seconde, 100 par 2 minutes)."""
+    annonce = {"X-App-Rate-Limit": "20:1,100:120", "X-Method-Rate-Limit": "2000:10"}
+    client, _, _, _ = client_avec([FakeResponse({}, headers=annonce)])
+
+    client.get(REGION, CHEMIN)
+
+    assert client.stats["limites_appli"] == "20:1,100:120"
+    assert client.stats["limites_methode"] == "2000:10"
+
+
+def test_get_logs_each_429_with_riot_counters(caplog):
+    caplog.set_level("WARNING")
+    refus = FakeResponse(
+        status_code=429,
+        headers={
+            "Retry-After": "40",
+            "X-Rate-Limit-Type": "application",
+            "X-App-Rate-Limit-Count": "3:1,101:120",
+        },
+    )
+    client, _, _, _ = client_avec([refus, FakeResponse({})])
+
+    client.get(REGION, CHEMIN)
+
+    message = caplog.text
+    assert "429" in message
+    assert "40" in message
+    assert "application" in message
+    assert "101:120" in message
+
+
+def test_get_never_writes_a_player_id_in_the_log(caplog):
+    """Le chemin des listes de parties contient le puuid du joueur : le
+    journal ne doit noter que le TYPE d'appel."""
+    caplog.set_level("WARNING")
+    http = FakeHttp()
+    http.reponses[REGION + CHEMIN_IDS] = [
+        FakeResponse(status_code=429, headers={"Retry-After": "1"}),
+        FakeResponse([]),
+    ]
+    limiteurs = {PLATEFORME: FakeLimiter(), REGION: FakeLimiter()}
+    client = RiotClient(FAUSSE_CLE, http, limiteurs, dormir=lambda s: None)
+
+    client.get(REGION, CHEMIN_IDS)
+
+    assert "429" in caplog.text
+    assert "ids" in caplog.text
+    assert "puuid-secret-123" not in caplog.text
+
+
+def test_client_keeps_one_connection_open_by_default():
+    """Une session garde la connexion ouverte d'une requete a l'autre. Mesure
+    du 03/11 : depuis ce reseau, une des deux adresses de Riot ne repond
+    jamais ; ouvrir une connexion peut couter 10 s, la reutiliser 0,07 s."""
+    client = RiotClient(FAUSSE_CLE)
+
+    assert isinstance(client.session, requests.Session)
+
+
+def test_get_tells_the_limiter_when_the_answer_came_back():
+    client, _, limiteurs, _ = client_avec([FakeResponse({})])
+
+    client.get(REGION, CHEMIN)
+
+    assert limiteurs[REGION].retours == 1
