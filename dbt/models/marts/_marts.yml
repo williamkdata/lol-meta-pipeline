@@ -110,6 +110,55 @@ models:
           arguments:
             expression: "win_rate_low <= win_rate AND win_rate <= win_rate_high"
 
+  - name: mart_meta_diffusion
+    description: >
+      Grille patch x champion (tous les champions Data Dragon) : taux de pick en
+      pro et sur la ladder EUW, appartenance au coeur de la meta (le plus petit
+      groupe de champions qui fait la moitie des picks), evolution depuis le
+      patch precedent. Taux NULL quand le patch n'est pas couvert par la source.
+    columns:
+      - name: pro_pick_rate
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+      - name: ladder_pick_rate
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [patch_key, champion_id]
+
+  - name: mart_meta_diffusion_lag
+    description: >
+      Delai de diffusion par champion : premier patch dans le coeur de la meta
+      pro, premier patch dans celui de la ladder, ecart en patches (positif :
+      le pro d'abord). Pas de delai quand l'entree est censuree (champion deja
+      dans la meta au premier patch collecte).
+    columns:
+      - name: champion_id
+        data_tests: [unique, not_null]
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values:
+                  - hors meta
+                  - deja dans la meta au debut de la collecte
+                  - ladder seulement
+                  - pro seulement (pas encore descendu)
+                  - entree pro avant la collecte ladder
+                  - mesure
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "(status = 'mesure') = (lag_patches IS NOT NULL)"
+
 unit_tests:
   # Le calcul de la fourchette, fige sur un cas verifie a la main : Ahri mid,
   # 3 victoires sur 4 -> Wilson 95 % = [0,3006 ; 0,9544].
@@ -164,3 +213,37 @@ unit_tests:
            first_item_id: 6676, first_item_name: "The Collector",
            second_item_id: 3031, second_item_name: "Infinity Edge",
            games: 1, wins: 1, share_of_champion_games: 1.0, win_rate: 1.0}
+
+  # Les cinq statuts du delai de diffusion. Pro collecte des le patch 1,
+  # ladder seulement depuis le patch 3 :
+  #   Teemo    jamais dans un coeur -> hors meta
+  #   Vi       coeur pro au patch 4, coeur ladder au patch 5 -> mesure, 1 patch
+  #   Ahri     coeur ladder des le patch 3, le premier collecte -> censure
+  #   Nocturne coeur pro au patch 4, jamais en ladder -> pro seulement
+  #   Jinx     coeur pro au patch 2, avant la collecte ladder -> non mesurable
+  - name: diffusion_lag_statuses_and_left_censoring
+    model: mart_meta_diffusion_lag
+    given:
+      - input: ref('mart_meta_diffusion')
+        rows:
+          - {patch_key: 1617, patch_index: 1, champion_id: 17, champion_name: Teemo,
+             pro_matches: 100, ladder_matches: null, in_pro_core: false, in_ladder_core: null}
+          - {patch_key: 1619, patch_index: 3, champion_id: 17, champion_name: Teemo,
+             pro_matches: 100, ladder_matches: 1000, in_pro_core: false, in_ladder_core: false}
+          - {patch_key: 1620, patch_index: 4, champion_id: 254, champion_name: Vi,
+             pro_matches: 100, ladder_matches: 1000, in_pro_core: true, in_ladder_core: false}
+          - {patch_key: 1621, patch_index: 5, champion_id: 254, champion_name: Vi,
+             pro_matches: 100, ladder_matches: 1000, in_pro_core: true, in_ladder_core: true}
+          - {patch_key: 1619, patch_index: 3, champion_id: 103, champion_name: Ahri,
+             pro_matches: 100, ladder_matches: 1000, in_pro_core: false, in_ladder_core: true}
+          - {patch_key: 1620, patch_index: 4, champion_id: 56, champion_name: Nocturne,
+             pro_matches: 100, ladder_matches: 1000, in_pro_core: true, in_ladder_core: false}
+          - {patch_key: 1618, patch_index: 2, champion_id: 222, champion_name: Jinx,
+             pro_matches: 100, ladder_matches: null, in_pro_core: true, in_ladder_core: null}
+    expect:
+      rows:
+        - {champion_id: 17, status: "hors meta", lag_patches: null}
+        - {champion_id: 254, status: "mesure", lag_patches: 1}
+        - {champion_id: 103, status: "deja dans la meta au debut de la collecte", lag_patches: null}
+        - {champion_id: 56, status: "pro seulement (pas encore descendu)", lag_patches: null}
+        - {champion_id: 222, status: "entree pro avant la collecte ladder", lag_patches: null}

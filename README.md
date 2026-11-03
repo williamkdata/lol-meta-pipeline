@@ -2,7 +2,7 @@
 
 Pipeline de données sur la meta de *League of Legends* : quels champions, builds et runes performent par matchup et par patch, comment se jouent les timings d'avantage — et combien de temps met un pick vu en compétition professionnelle à descendre sur la ladder haut elo.
 
-> **En construction — étapes 1 à 7 sur 9.** Les trois sources sont collectées chaque jour par Airflow et chargées dans BigQuery ; dbt en tire la meta pro et la meta du ladder par patch : champions, matchups, timings d'avantage, builds et runes, chaque taux de victoire avec sa fourchette de confiance. Prochaine étape : la diffusion de la meta, du pro vers le ladder.
+> **Les 9 étapes sont terminées (03/11/2026), et la collecte continue chaque jour.** Les trois sources sont chargées dans BigQuery par Airflow ; dbt en tire la meta pro et la meta du ladder par patch (champions, matchups, timings d'avantage, builds, runes, chaque taux de victoire avec sa fourchette de confiance) et la diffusion de la meta entre les deux. Les seuils de volume par matchup et les premiers délais de diffusion seront mesurés quand un patch complet du ladder aura été collecté.
 
 ## Sources
 
@@ -37,8 +37,8 @@ API Riot ─────────┘    brut gzip,        lol_raw (permanent)
 | 5 | Client de l'API Riot : limiteur de débit, 429, clé hors du code | ✅ |
 | 6 | Collecte du ladder, timelines aplaties, volume mesuré | ✅ |
 | 7 | Marts du ladder : matchups, builds, runes, timings | ✅ |
-| 8 | Mart de diffusion de la meta, pro → ladder | à venir |
-| 9 | Coûts mesurés sur la durée, limites, bilan | à venir |
+| 8 | Mart de diffusion de la meta, pro → ladder | ✅ |
+| 9 | Coûts mesurés, limites, bilan | ✅ |
 
 ## Les marts
 
@@ -49,6 +49,8 @@ API Riot ─────────┘    brut gzip,        lol_raw (permanent)
 | `mart_ladder_matchups` | Qui bat qui dans sa voie, et avec quelle avance d'or, d'XP et de sbires à 10 et 15 minutes ? | patch × poste × champion × adversaire |
 | `mart_ladder_builds` | Quels deux premiers objets terminés, dans quel ordre, et avec quel résultat ? | patch × poste × champion × chemin |
 | `mart_ladder_runes` | Quelle page de runes (rune principale + arbres) ? | patch × poste × champion × page |
+| `mart_meta_diffusion` | Pro et ladder côte à côte : taux de pick, appartenance au cœur de la meta, évolution d'un patch à l'autre | patch × champion |
+| `mart_meta_diffusion_lag` | Combien de patches entre l'entrée d'un champion dans la meta pro et son entrée dans la meta ladder ? | champion |
 
 Chaque taux de victoire du ladder est accompagné de sa **fourchette à 95 %** (`win_rate_low`, `win_rate_high`).
 
@@ -75,10 +77,17 @@ Chaque taux de victoire du ladder est accompagné de sa **fourchette à 95 %** (
 
 **L'ordre des builds vient de la timeline.** Une partie ne donne que l'inventaire final. L'ordre des achats vient des événements de la timeline, achats annulés exclus (6 annulations d'objets terminés dans les 28 premières parties). Un test unitaire dbt fige le cas : Lame d'infini achetée puis annulée, Collector, Lame rachetée → chemin « Collector puis Lame ».
 
+**La diffusion de la meta, mesurée honnêtement.** Le « cœur de la meta » d'un patch est le plus petit groupe de champions qui fait la moitié des picks : 20 à 28 champions en pro, 37 sur la ladder haut elo au 16.21. Le délai de diffusion est l'écart en patches entre l'entrée d'un champion dans le cœur pro et son entrée dans le cœur ladder. La ladder n'étant collectée que depuis le patch 16.21, tout ce qui s'est passé avant est **inconnu, pas absent** : un champion déjà dans la meta au premier patch collecté, ou entré en pro avant le début de la collecte, reçoit un statut qui le dit, sans délai inventé. Au 03/11, aucun délai n'est encore mesurable ; les mesures apparaissent d'elles-mêmes au fil des patches.
+
+**Un collecteur qui dit ce qu'il fait.** Le premier run complet a été cinq fois trop lent, et son journal était muet. Mesuré depuis le bucket (heure de dépôt de chaque lot), puis au niveau des connexions : une des deux adresses de l'API (Cloudflare) est injoignable depuis le réseau local, et chaque nouvelle connexion perdait jusqu'à 10 secondes à l'essayer. Trois hypothèses plus classiques (DNS, IPv6, réseaux Docker) ont été écartées par la mesure avant. Correction : une session HTTP qui réutilise la connexion (0,07 s par requête au lieu de 10). Le collecteur journalise désormais son avancement, chaque 429 avec les compteurs de Riot, et les limites que Riot annonce, comparées à celles que suppose le limiteur — sans jamais écrire d'identifiant de joueur.
+
+Run du 03/11 après correction : **825 requêtes en 17 minutes** (contre plus de 2 heures avant), 261 parties, **un seul 429**, 0 panne. Riot annonce `100:120,20:1`, exactement les limites supposées par le limiteur. Le seul 429 venait d'un décalage d'horloge : le limiteur datait une requête à son départ, Riot à son arrivée, et la première connexion d'un run peut mettre 10 secondes à arriver ; le `Retry-After` imposé était de 11 secondes. Le limiteur date maintenant chaque requête au retour de sa réponse, ce qui le rend sûr quelle que soit la latence.
+
 **Des tests sur les données, pas seulement sur le code.**
 - `SAFE_CAST` ne plante jamais : une valeur non convertible devient `NULL` en silence. Un test singulier vérifie qu'aucune valeur non vide n'est perdue à la conversion (0 sur 10 colonnes).
 - Data Dragon contient au patch 16.15 soixante entrées `Jade_<Champion>` qui dupliquent des noms de vrais champions. Elles sont écartées, et un test d'unicité du nom par patch protège la jointure par nom.
 - Un `dbt build` a déjà affiché « réussi » avec zéro test lancé, à cause d'un cache d'analyse périmé : les runs d'Airflow utilisent `--no-partial-parse`.
+- Une partie compte 10 picks : les taux de pick d'un patch font 10. Ce test a attrapé un taux calculé avec un numérateur et un dénominateur venus de deux tables d'âges différents (8,70 au lieu de 10).
 
 ## Coût et volume
 
@@ -90,14 +99,29 @@ D'où deux choix d'infrastructure :
 - **un dataset par politique de rétention**, pas par source : le référentiel et les données pro n'expirent jamais ; le ladder vit dans des tables partitionnées par jour de partie, qui expirent après 60 jours ;
 - **une durée de vie de 30 jours** sur le bucket de landing.
 
-Volume mesuré sur un premier run réel (30 parties) :
+**Mesuré le 03/11/2026**, six jours après le début du projet (vues système `INFORMATION_SCHEMA.JOBS_BY_PROJECT` et `__TABLES__`, `gcloud storage du`) :
 
-| | par partie | 400 parties par jour, sur la durée de rétention |
-|---|---|---|
-| Cloud Storage (gzip) | ~67 Ko | ~0,8 Go sur 30 jours |
-| BigQuery | ~70 Ko | ~1,7 Go sur 60 jours |
+| | Mesuré | Free tier mensuel | Part utilisée |
+|---|---|---|---|
+| Requêtes BigQuery | 272 requêtes, **2,49 Gio facturés** | 1 Tio | 0,24 % |
+| Chargements BigQuery | 28 | gratuits | — |
+| Stockage BigQuery | ~111 Mio (`lol_raw` 87 Mio, `lol_raw_ladder` 23 Mio, marts < 1 Mio) | 10 Gio, partagés avec Vélib' | ~1 % |
+| Cloud Storage | 92 Mo | 5 Go | ~2 % |
 
-Les deux restent dans le free tier. Une requête Riot prend environ 2 secondes : un run quotidien d'environ 1 100 requêtes dure une trentaine de minutes, sous le quota de la clé.
+**Coût facturé : 0 €.** Les 272 requêtes ont lu 0,24 Gio mais en ont été facturées 2,49 : chaque requête est facturée au moins 10 Mio, quelle que soit sa taille. À cette échelle, c'est le **nombre** de requêtes qui coûte, pas leur volume.
+
+Volume par partie du ladder, mesuré sur le premier run réel : ~70 Ko dans BigQuery, ~67 Ko compressés dans le bucket. À 400 parties par jour, la rétention de 60 jours tient en ~1,7 Go dans BigQuery, et celle de 30 jours en ~0,8 Go dans le bucket : toujours dans le free tier.
+
+## Limites
+
+- **Airflow tourne en local** : la collecte n'a lieu que si le PC est allumé à 14 h 30 UTC. La fenêtre de 2 jours absorbe un jour manqué ; au-delà, des parties sont perdues.
+- **Un échantillon, pas tout le ladder.** La clé *personal* autorise 100 requêtes par 2 minutes : environ 400 nouvelles parties par jour, à partir des 300 premiers joueurs Challenger et Grandmaster. Les parties sont celles de joueurs du haut du classement, pas un tirage aléatoire.
+- **La diffusion de la meta est censurée à gauche.** La ladder n'est collectée que depuis le patch 16.21 ; aucun délai n'est mesurable tant qu'un champion n'est pas entré dans la meta pendant la fenêtre observée. Le pro, lui, saute des patches (aucun match au 16.19) : un délai en patches se lit avec ça en tête.
+- **Les seuils viennent d'un premier échantillon** (parties ≥ 15 min, objets ≥ 2 000 po) et seront revérifiés sur un patch complet. Aucun seuil de volume n'est encore imposé aux matchups : chaque taux est publié avec sa fourchette de confiance, qui dit elle-même quand un effectif est trop faible.
+- **Une adresse de l'API injoignable** depuis le réseau local (cause inconnue) : contournée par une connexion réutilisée, pas résolue.
+- **Les plaques de tourelle** ne suivent pas la règle connue (jusqu'à 15 par équipe et par voie, jusqu'à la minute 36) : collectées, mais utilisées par aucune mart tant que la mécanique n'est pas vérifiée.
+- **Les données pro** dépendent d'Oracle's Elixir : certains matchs sont incomplets (écart d'or à 15 minutes manquant pour 1 740 lignes joueurs).
+- **Un poste peut manquer.** Riot laisse le poste vide quand il ne sait pas déduire le rôle d'un joueur (1 ligne sur 2 890 au 03/11, dans une partie finie à 15 min 32 s). Un test le signale en avertissement ; la mart des matchups écarte d'elle-même le duel concerné.
 
 ## Structure
 
@@ -123,6 +147,9 @@ Orchestration : depuis `airflow/`, `docker compose up -d`, puis l'interface sur 
 
 ## Attribution et conditions d'utilisation
 
+lol-meta-pipeline isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, and all associated properties are trademarks or registered trademarks of Riot Games, Inc.
+
+*(Mention légale imposée par les [règles du portail développeur de Riot](https://developer.riotgames.com/policies/general), reprise mot pour mot.)*
+
 - Données de compétition : [Oracle's Elixir](https://oracleselixir.com/). Une partie du contenu provient de [Leaguepedia](https://lol.fandom.com/), sous licence CC BY-SA 3.0.
-- Les statistiques de jeu sont la propriété de Riot Games. Ce projet n'est ni approuvé ni sponsorisé par Riot Games, et ne reflète pas ses positions.
-- Seuls le code et des agrégats sont publiés. Les données brutes ne sont pas redistribuées.
+- Seuls le code et des agrégats sont publiés. Les données brutes ne sont pas redistribuées, et aucun identifiant de joueur (puuid, pseudo) n'est stocké.
