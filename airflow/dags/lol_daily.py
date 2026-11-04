@@ -1,6 +1,7 @@
-"""Pipeline LoL quotidien : Data Dragon + Oracle's Elixir + ladder EUW, puis dbt.
+"""Pipeline LoL quotidien : Data Dragon + Oracle's Elixir + ladder EUW + kits, puis dbt.
 
-    [ingest_ddragon, ingest_oracles_elixir, ingest_ladder] >> dbt_deps >> dbt_build
+    [ingest_ddragon, ingest_oracles_elixir, ingest_ladder, ingest_kits]
+        >> dbt_deps >> dbt_build
 
 Cadence : une fois par jour, a 14 h 30 UTC. Oracle's Elixir publie son fichier
 une fois par jour (observe : 13 h 05 UTC le 29/10/2026) et demande de ne pas
@@ -48,14 +49,24 @@ with DAG(
         retry_delay=timedelta(hours=2),
     )
 
-    # Le ladder EUW par l'API Riot (cle personal) : ~1 100 requetes, ~35 min
-    # (mesure du 02/11 : ~2 s par requete). Un nouvel essai ne recollecte rien :
-    # les parties deja en base sont ecartees. Le plafond de 2 h evite qu'un run
-    # bloque tienne la place du suivant.
+    # Le ladder EUW par l'API Riot (cle personal) : 1 000 joueurs (Challenger +
+    # Grandmaster), ~1 800 requetes, ~36 min au rythme du quota (mesure du
+    # 03/11 : 825 requetes en 17 min avec la session). Un nouvel essai ne
+    # recollecte rien : les parties deja en base sont ecartees. Le plafond de
+    # 2 h evite qu'un run bloque tienne la place du suivant.
     ingest_ladder = BashOperator(
         task_id="ingest_ladder",
         bash_command="cd /opt/airflow && python ingestion/ladder.py",
         execution_timeout=timedelta(hours=2),
+    )
+
+    # Les kits des champions (formules des sorts) depuis CommunityDragon : seuls
+    # les patches absents de BigQuery sont charges. Les jours sans nouveau patch,
+    # rien n'est telecharge ; le jour d'un patch (~1 min, 173 fichiers), le dbt
+    # build qui suit produit la liste des changements (mart_kit_*_changes).
+    ingest_kits = BashOperator(
+        task_id="ingest_kits",
+        bash_command="cd /opt/airflow && python ingestion/kits.py",
     )
 
     # dbt_packages/ n'est pas versionne : on l'installe a chaque run.
@@ -69,4 +80,8 @@ with DAG(
         bash_command=f"dbt build {DBT_OPTIONS} --no-partial-parse --no-use-colors",
     )
 
-    [ingest_ddragon, ingest_oracles_elixir, ingest_ladder] >> dbt_deps >> dbt_build
+    (
+        [ingest_ddragon, ingest_oracles_elixir, ingest_ladder, ingest_kits]
+        >> dbt_deps
+        >> dbt_build
+    )

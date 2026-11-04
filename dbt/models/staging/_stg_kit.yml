@@ -1,0 +1,50 @@
+version: 2
+
+# Les kits des champions (formules des sorts), depuis CommunityDragon.
+# Jade_ ecartes ; le doublon de Rek'Sai (dans le fichier du jeu) dedoublonne.
+
+models:
+  - name: stg_kit__formulas
+    description: Une formule de sort entiere (JSON canonique) par patch, champion et touche.
+    columns:
+      - name: patch_key
+        data_tests: [not_null]
+      - name: slot
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [Q, W, E, R, P]
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [patch_key, champion_id, slot, calc_name]
+
+  - name: stg_kit__parts
+    description: Un morceau de formule par patch, champion, touche, formule et position.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [patch_key, champion_id, slot, calc_name, part_path]
+
+  - name: stg_kit__values
+    description: Une valeur par rang par patch, champion, touche, sort, nom et rang.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              [patch_key, champion_id, slot, spell_name, value_name, spell_rank]
+
+  - name: stg_ddragon__spells
+    description: Temps de recharge et cout par champion, touche et rang (Data Dragon).
+    columns:
+      - name: max_rank
+        data_tests: [not_null]
+      - name: slot
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [Q, W, E, R]
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [patch_key, champion_id, slot, spell_rank]

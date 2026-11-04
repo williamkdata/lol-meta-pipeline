@@ -159,6 +159,39 @@ models:
           arguments:
             expression: "(status = 'mesure') = (lag_patches IS NOT NULL)"
 
+  - name: mart_kit_value_changes
+    description: >
+      Chiffres des sorts qui changent d'un patch au suivant (buffs et nerfs),
+      avec la variation absolue et relative. source = communitydragon (valeurs
+      par rang) ou data_dragon (temps de recharge, cout).
+    columns:
+      - name: source
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [communitydragon, data_dragon]
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              [patch_key, source, champion_id, slot, spell_name, value_name, spell_rank]
+
+  - name: mart_kit_part_changes
+    description: >
+      Morceaux de formule modifies, ajoutes ou retires d'un patch au suivant,
+      compares au meme endroit de l'arbre. Seuls les champions presents dans
+      les deux patches sont compares.
+    columns:
+      - name: change_kind
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [ajoute, retire, modifie]
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [patch_key, champion_id, slot, calc_name, part_path]
+
 unit_tests:
   # Le calcul de la fourchette, fige sur un cas verifie a la main : Ahri mid,
   # 3 victoires sur 4 -> Wilson 95 % = [0,3006 ; 0,9544].
@@ -247,3 +280,48 @@ unit_tests:
         - {champion_id: 103, status: "deja dans la meta au debut de la collecte", lag_patches: null}
         - {champion_id: 56, status: "pro seulement (pas encore descendu)", lag_patches: null}
         - {champion_id: 222, status: "entree pro avant la collecte ladder", lag_patches: null}
+
+  # Deux patches. Ambessa (799) :
+  #   bouclier W, ratio AD bonus 1,5 -> 1,8           -> modifie
+  #   un ratio de PV bonus apparait au 2e patch       -> ajoute
+  #   un nombre fixe disparait au 2e patch            -> retire
+  #   la partie selon le niveau ne bouge pas          -> absente du resultat
+  # Un champion qui sort au 2e patch (950)            -> rien
+  - name: kit_part_changes_detects_modified_added_and_removed_pieces
+    model: mart_kit_part_changes
+    given:
+      - input: ref('stg_kit__parts')
+        rows:
+          - {patch_key: 1621, champion_id: 799, slot: W, calc_name: Calc_Shield,
+             part_path: "mFormulaParts.0", part_type: ByCharLevelInterpolationCalculationPart,
+             start_value: 50.0, end_value: 320.0}
+          - {patch_key: 1621, champion_id: 799, slot: W, calc_name: Calc_Shield,
+             part_path: "mFormulaParts.1", part_type: StatByCoefficientCalculationPart,
+             stat: 2, stat_formula: 2, coefficient: 1.5}
+          - {patch_key: 1621, champion_id: 799, slot: W, calc_name: Calc_Shield,
+             part_path: "mFormulaParts.2", part_type: NumberCalculationPart, number: 10.0}
+          - {patch_key: 1622, champion_id: 799, slot: W, calc_name: Calc_Shield,
+             part_path: "mFormulaParts.0", part_type: ByCharLevelInterpolationCalculationPart,
+             start_value: 50.0, end_value: 320.0}
+          - {patch_key: 1622, champion_id: 799, slot: W, calc_name: Calc_Shield,
+             part_path: "mFormulaParts.1", part_type: StatByCoefficientCalculationPart,
+             stat: 2, stat_formula: 2, coefficient: 1.8}
+          - {patch_key: 1622, champion_id: 799, slot: W, calc_name: Calc_Shield,
+             part_path: "mFormulaParts.3", part_type: StatByCoefficientCalculationPart,
+             stat: 12, stat_formula: 2, coefficient: 0.04}
+          - {patch_key: 1622, champion_id: 950, slot: Q, calc_name: Calc_Damage,
+             part_path: "mFormulaParts.0", part_type: NumberCalculationPart, number: 5.0}
+      - input: ref('stg_ddragon__champions')
+        rows:
+          - {patch_key: 1622, champion_id: 799, champion_name: Ambessa}
+    expect:
+      rows:
+        - {patch_key: 1622, previous_patch_key: 1621, champion_id: 799, champion_name: Ambessa,
+           part_path: "mFormulaParts.1", change_kind: modifie,
+           old_coefficient: 1.5, new_coefficient: 1.8}
+        - {patch_key: 1622, previous_patch_key: 1621, champion_id: 799, champion_name: Ambessa,
+           part_path: "mFormulaParts.3", change_kind: ajoute,
+           old_coefficient: null, new_coefficient: 0.04}
+        - {patch_key: 1622, previous_patch_key: 1621, champion_id: 799, champion_name: Ambessa,
+           part_path: "mFormulaParts.2", change_kind: retire,
+           old_coefficient: null, new_coefficient: null}

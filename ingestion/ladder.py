@@ -408,7 +408,10 @@ def collect_ladder(
 
 if __name__ == "__main__":
     options = argparse.ArgumentParser(description="Collecte du ladder EUW")
-    options.add_argument("--max-joueurs", type=int, default=300)
+    # 1 000 = tout Challenger (300) + Grandmaster (700). Le 03/11, avec 300
+    # joueurs, 261 parties nouvelles seulement : le plafond de 400 n'etait pas
+    # atteint. ~1 800 requetes, ~36 min au rythme du quota (100 par 2 min).
+    options.add_argument("--max-joueurs", type=int, default=1000)
     options.add_argument("--max-parties", type=int, default=400)
     reglages = options.parse_args()
 

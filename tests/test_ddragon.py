@@ -5,16 +5,20 @@ import ddragon
 from ddragon import (
     ITEMS_TABLE,
     RUNES_TABLE,
+    SPELLS_TABLE,
     fetch_champions,
     fetch_items,
     fetch_runes,
+    fetch_spells,
     fetch_versions,
     flatten_champions,
     flatten_items,
     flatten_runes,
+    flatten_spells,
     load_items_season,
     load_runes_season,
     load_season,
+    load_spells_season,
     loaded_versions,
     missing_versions,
     patch_of,
@@ -565,3 +569,110 @@ def test_loaded_versions_reads_the_table_it_is_given():
 
     [sql] = client.requetes
     assert ITEMS_TABLE in sql
+
+
+# --- sorts : flatten_spells -------------------------------------------------
+
+# Kayle au 16.22, d'apres Data Dragon : les temps de recharge conformes aux
+# notes de patch (Q 10/9.5/9/8.5/8 s, R 140/110/80 s).
+CHAMPIONS_FULL = {
+    "version": "16.22.1",
+    "data": {
+        "Kayle": {
+            "key": "10",
+            "id": "Kayle",
+            "spells": [
+                {
+                    "id": "KayleQ",
+                    "name": "Radiant Blast",
+                    "maxrank": 5,
+                    "cooldown": [10, 9.5, 9, 8.5, 8],
+                    "cost": [60, 70, 80, 90, 100],
+                },
+                {
+                    "id": "KayleW",
+                    "name": "Celestial Blessing",
+                    "maxrank": 5,
+                    "cooldown": [15, 15, 15, 15, 15],
+                    "cost": [70, 75, 80, 85, 90],
+                },
+                {
+                    "id": "KayleE",
+                    "name": "Starfire Spellblade",
+                    "maxrank": 5,
+                    "cooldown": [8, 7.5, 7, 6.5, 6],
+                    "cost": [0, 0, 0, 0, 0],
+                },
+                {
+                    "id": "KayleR",
+                    "name": "Divine Judgment",
+                    "maxrank": 3,
+                    "cooldown": [140, 110, 80],
+                    "cost": [100, 50, 0],
+                },
+            ],
+        }
+    },
+}
+
+
+def sort_de(lignes, touche):
+    return [ligne for ligne in lignes if ligne["slot"] == touche]
+
+
+def test_flatten_spells_gives_one_row_per_rank_up_to_the_max_rank():
+    lignes = flatten_spells(CHAMPIONS_FULL)
+
+    assert len(sort_de(lignes, "Q")) == 5
+    assert len(sort_de(lignes, "R")) == 3
+    assert len(lignes) == 5 + 5 + 5 + 3
+
+
+def test_flatten_spells_reads_cooldown_and_cost_by_rank():
+    q = sort_de(flatten_spells(CHAMPIONS_FULL), "Q")
+
+    assert [(ligne["spell_rank"], ligne["cooldown"]) for ligne in q] == [
+        (1, 10),
+        (2, 9.5),
+        (3, 9),
+        (4, 8.5),
+        (5, 8),
+    ]
+    assert q[0]["cost"] == 60
+
+
+def test_flatten_spells_takes_the_key_from_the_position():
+    """Position = touche : verifie le 04/11 sur les 173 champions."""
+    lignes = flatten_spells(CHAMPIONS_FULL)
+
+    assert {ligne["spell_id"] for ligne in sort_de(lignes, "R")} == {"KayleR"}
+    assert sort_de(lignes, "R")[0]["max_rank"] == 3
+
+
+def test_flatten_spells_stamps_patch_and_champion():
+    for ligne in flatten_spells(CHAMPIONS_FULL):
+        assert (ligne["patch"], ligne["version"]) == ("16.22", "16.22.1")
+        assert (ligne["champion_id"], ligne["champion_code"]) == (10, "Kayle")
+
+
+def test_fetch_spells_requests_the_full_champion_file(http):
+    url = f"{CDN}/16.22.1/data/en_US/championFull.json"
+    http.reponses[url] = FakeResponse(CHAMPIONS_FULL)
+
+    assert fetch_spells("16.22.1") == CHAMPIONS_FULL
+
+
+def test_load_spells_season_loads_only_the_missing_patches_into_the_spells_table(
+    saison,
+):
+    for version in ("16.2.1", "16.1.1"):
+        saison.reponses[f"{CDN}/{version}/data/en_US/championFull.json"] = FakeResponse(
+            {**CHAMPIONS_FULL, "version": version}
+        )
+    client = FakeBigQuery(resultat_requete=[{"version": "16.1.1"}])
+
+    assert load_spells_season(client) == 18
+
+    [(rows, destination, _)] = client.appels
+    assert destination == SPELLS_TABLE
+    assert {row["patch"] for row in rows} == {"16.2"}

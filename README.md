@@ -3,6 +3,8 @@
 Pipeline de données sur la meta de *League of Legends* : quels champions, builds et runes performent par matchup et par patch, comment se jouent les timings d'avantage — et combien de temps met un pick vu en compétition professionnelle à descendre sur la ladder haut elo.
 
 > **Les 9 étapes sont terminées (03/11/2026), et la collecte continue chaque jour.** Les trois sources sont chargées dans BigQuery par Airflow ; dbt en tire la meta pro et la meta du ladder par patch (champions, matchups, timings d'avantage, builds, runes, chaque taux de victoire avec sa fourchette de confiance) et la diffusion de la meta entre les deux. Les seuils de volume par matchup et les premiers délais de diffusion seront mesurés quand un patch complet du ladder aura été collecté.
+>
+> **Depuis le 04/11/2026 : vers un assistant pour les joueurs.** Le projet devient la base d'un outil d'aide aux joueurs, dans l'esprit de Blitz. Premier moteur construit : un **moteur théorique** qui lit les formules des sorts dans les fichiers du jeu et détecte, le jour même d'un patch, **ce qui a changé** — validé contre les notes de patch officielles.
 
 ## Sources
 
@@ -10,7 +12,8 @@ Pipeline de données sur la meta de *League of Legends* : quels champions, build
 |---|---|---|---|
 | Ladder EUW | API Riot Games (Challenger + Grandmaster, classée solo) | quotidienne | clé *personal* |
 | Compétition pro | Oracle's Elixir | quotidienne | fichier public, via l'API Google Drive |
-| Référentiel | Data Dragon (champions, objets, runes) | à chaque patch | public, sans clé |
+| Référentiel | Data Dragon (champions, objets, runes, temps de recharge et coûts des sorts) | à chaque patch | public, sans clé |
+| Formules des sorts | CommunityDragon (fichiers du jeu extraits, **source communautaire, non officielle**) | à chaque patch | public, sans clé |
 
 Le temps réel des matchs professionnels n'est pas accessible : il passe par un portail réservé aux équipes et partenaires de Riot. Oracle's Elixir en est lui-même en aval.
 
@@ -51,8 +54,22 @@ API Riot ─────────┘    brut gzip,        lol_raw (permanent)
 | `mart_ladder_runes` | Quelle page de runes (rune principale + arbres) ? | patch × poste × champion × page |
 | `mart_meta_diffusion` | Pro et ladder côte à côte : taux de pick, appartenance au cœur de la meta, évolution d'un patch à l'autre | patch × champion |
 | `mart_meta_diffusion_lag` | Combien de patches entre l'entrée d'un champion dans la meta pro et son entrée dans la meta ladder ? | champion |
+| `mart_kit_value_changes` | Quels chiffres de sorts ont changé avec le patch (dégâts, temps de recharge, coûts) ? | patch × champion × touche × chiffre × rang |
+| `mart_kit_part_changes` | Quels ratios et morceaux de formule ont été modifiés, ajoutés ou retirés ? | patch × champion × touche × morceau de formule |
 
 Chaque taux de victoire du ladder est accompagné de sa **fourchette à 95 %** (`win_rate_low`, `win_rate_high`).
+
+## Le moteur théorique : ce qui change d'un patch à l'autre
+
+Le jour d'un nouveau patch, il n'existe encore aucune partie : un outil fondé sur les statistiques de jeu n'a rien de fiable à dire. Le moteur théorique part des **chiffres du jeu** eux-mêmes.
+
+- **Les formules des sorts viennent des fichiers du jeu** (CommunityDragon) : Data Dragon, la source officielle, ne donne pas les ratios (champs vides, descriptions à trous). Chaque formule est un **arbre** (une somme de morceaux, un morceau multiplié par un autre…), aplati par une fonction récursive : 2 019 formules et 173 champions par patch, 0 morceau perdu (contrôle : autant de lignes que de nœuds typés dans le texte de chaque formule).
+- **Les codes internes sont décodés et vérifiés** par une seconde source, avant d'être utilisés : `(2, 2)` = attaque bonus (le bouclier du W d'Ambessa : 50 → 320 selon le niveau, + 150 % de l'attaque bonus), code absent = puissance (le fichier omet les valeurs par défaut), `12` = PV, `1` = armure, `6` = résistance magique. Les autres codes restent marqués inconnus.
+- **Chaque chiffre vient de la meilleure source pour lui** : formules et ratios depuis CommunityDragon, temps de recharge et coûts depuis Data Dragon. Le champ de temps de recharge le plus évident des fichiers du jeu (`cooldownTime`) **n'est plus à jour** : seule la confrontation aux notes de patch l'a révélé.
+- **Validé contre les notes de patch officielles du 16.22 : les 14 champions annoncés sont détectés**, chiffre par chiffre (par exemple Kayle, Q : 12/11/10/9/8 s → 10/9,5/9/8,5/8 s, les rangs inchangés n'apparaissant pas). Le moteur relève aussi un changement **non annoncé** (le passif de Varus) et un faux positif connu (des formules d'Orianna renommées dans les fichiers).
+- **22 patches de la saison chargés** (40 377 formules, 133 157 morceaux, 719 610 valeurs par rang, ~73 Mio) ; chaque jour, seuls les patches absents sont téléchargés.
+
+Prochaines étapes : la valeur théorique de chaque objet pour chaque champion (stats des objets × ratios des sorts), puis la confrontation de cette théorie aux parties réellement jouées.
 
 ## Choix notables
 
@@ -115,18 +132,20 @@ Volume par partie du ladder, mesuré sur le premier run réel : ~70 Ko dans BigQ
 ## Limites
 
 - **Airflow tourne en local** : la collecte n'a lieu que si le PC est allumé à 14 h 30 UTC. La fenêtre de 2 jours absorbe un jour manqué ; au-delà, des parties sont perdues.
-- **Un échantillon, pas tout le ladder.** La clé *personal* autorise 100 requêtes par 2 minutes : environ 400 nouvelles parties par jour, à partir des 300 premiers joueurs Challenger et Grandmaster. Les parties sont celles de joueurs du haut du classement, pas un tirage aléatoire.
+- **Un échantillon, pas tout le ladder.** La clé *personal* autorise 100 requêtes par 2 minutes : environ 400 nouvelles parties par jour, à partir des 1 000 joueurs Challenger et Grandmaster. Les parties sont celles de joueurs du haut du classement, pas un tirage aléatoire.
 - **La diffusion de la meta est censurée à gauche.** La ladder n'est collectée que depuis le patch 16.21 ; aucun délai n'est mesurable tant qu'un champion n'est pas entré dans la meta pendant la fenêtre observée. Le pro, lui, saute des patches (aucun match au 16.19) : un délai en patches se lit avec ça en tête.
 - **Les seuils viennent d'un premier échantillon** (parties ≥ 15 min, objets ≥ 2 000 po) et seront revérifiés sur un patch complet. Aucun seuil de volume n'est encore imposé aux matchups : chaque taux est publié avec sa fourchette de confiance, qui dit elle-même quand un effectif est trop faible.
 - **Une adresse de l'API injoignable** depuis le réseau local (cause inconnue) : contournée par une connexion réutilisée, pas résolue.
 - **Les plaques de tourelle** ne suivent pas la règle connue (jusqu'à 15 par équipe et par voie, jusqu'à la minute 36) : collectées, mais utilisées par aucune mart tant que la mécanique n'est pas vérifiée.
 - **Les données pro** dépendent d'Oracle's Elixir : certains matchs sont incomplets (écart d'or à 15 minutes manquant pour 1 740 lignes joueurs).
+- **Les formules des sorts viennent d'une source communautaire** (CommunityDragon), non officielle : à valider avant toute demande de clé de production. Quand Riot renomme une formule dans ses fichiers, la détection des changements la voit comme un retrait plus un ajout.
 - **Un poste peut manquer.** Riot laisse le poste vide quand il ne sait pas déduire le rôle d'un joueur (1 ligne sur 2 890 au 03/11, dans une partie finie à 15 min 32 s). Un test le signale en avertissement ; la mart des matchups écarte d'elle-même le duel concerné.
 
 ## Structure
 
 ```
-ingestion/        Data Dragon, Oracle's Elixir, client Riot (limiteur), collecteur du ladder
+ingestion/        Data Dragon, Oracle's Elixir, client Riot (limiteur), collecteur du ladder,
+                  kits des champions (formules des sorts, CommunityDragon)
 infra/terraform/  bucket, datasets, compte de service, IAM minimal
 airflow/          image, docker-compose, DAG quotidien lol_daily
 dbt/              staging (vues) -> marts (tables), tests de données

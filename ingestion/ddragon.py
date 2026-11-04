@@ -13,6 +13,7 @@ LANGUE = "en_US"
 CHAMPIONS_TABLE = "lol-meta-pipeline.lol_raw.ddragon_champions"
 ITEMS_TABLE = "lol-meta-pipeline.lol_raw.ddragon_items"
 RUNES_TABLE = "lol-meta-pipeline.lol_raw.ddragon_runes"
+SPELLS_TABLE = "lol-meta-pipeline.lol_raw.ddragon_spells"
 
 CHAMPIONS_SCHEMA = [
     bigquery.SchemaField("patch", "STRING", mode="REQUIRED"),
@@ -49,6 +50,24 @@ RUNES_SCHEMA = [
     bigquery.SchemaField("tree_id", "INTEGER", mode="REQUIRED"),
     bigquery.SchemaField("tree_name", "STRING", mode="REQUIRED"),
     bigquery.SchemaField("slot", "INTEGER", mode="REQUIRED"),
+]
+
+# Une ligne par champion, touche et rang : temps de recharge et cout. Source
+# OFFICIELLE et a jour pour ces deux chiffres (verifie le 04/11 contre les notes
+# du 26.22 : Kayle Q 12/11/10/9/8 -> 10/9,5/9/8,5/8). Les formules des sorts,
+# elles, n'y sont pas : CommunityDragon (kits.py).
+SPELLS_SCHEMA = [
+    bigquery.SchemaField("patch", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("version", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("champion_id", "INTEGER", mode="REQUIRED"),
+    bigquery.SchemaField("champion_code", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("slot", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("spell_id", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("spell_name", "STRING"),
+    bigquery.SchemaField("max_rank", "INTEGER", mode="REQUIRED"),
+    bigquery.SchemaField("spell_rank", "INTEGER", mode="REQUIRED"),
+    bigquery.SchemaField("cooldown", "FLOAT"),
+    bigquery.SchemaField("cost", "FLOAT"),
 ]
 
 
@@ -136,6 +155,38 @@ def flatten_runes(version: str, arbres: list[dict]) -> list[dict]:
     return lignes
 
 
+def flatten_spells(payload: dict) -> list[dict]:
+    """Une ligne par champion, touche et rang, depuis championFull.json.
+
+    La POSITION dans la liste des sorts est la touche (Q, W, E, R) : verifie le
+    04/11 sur les 173 champions contre le client du jeu (champ spellKey)."""
+    version = payload["version"]
+    patch = patch_of(version)
+
+    lignes = []
+    for champion in payload["data"].values():
+        for touche, sort in zip("QWER", champion["spells"], strict=False):
+            # Une ligne par rang, jusqu'au rang maximum du sort (5, ou 3 pour un
+            # ultime) : les listes cooldown et cost ont exactement cette longueur.
+            for rang in range(1, sort["maxrank"] + 1):
+                lignes.append(
+                    {
+                        "patch": patch,
+                        "version": version,
+                        "champion_id": int(champion["key"]),
+                        "champion_code": champion["id"],
+                        "slot": touche,
+                        "spell_id": sort["id"],
+                        "spell_name": sort["name"],
+                        "max_rank": sort["maxrank"],
+                        "spell_rank": rang,
+                        "cooldown": sort["cooldown"][rang - 1],
+                        "cost": sort["cost"][rang - 1],
+                    }
+                )
+    return lignes
+
+
 def fetch_versions() -> list[str]:
     """Les versions publiees par Data Dragon, la plus recente en premier."""
     reponse = requests.get(VERSIONS_URL, timeout=TIMEOUT_S)
@@ -176,6 +227,12 @@ def fetch_runes(version: str) -> list[dict]:
     """Le fichier runesReforged.json d'une version. C'est une liste, sans champ
     version : on ne peut pas la verifier comme les deux autres."""
     return _fetch_json(version, "runesReforged.json")
+
+
+def fetch_spells(version: str) -> dict:
+    """Le fichier championFull.json d'une version : tous les champions, avec
+    leurs sorts (un seul fichier, ~2 Mo, au lieu d'un par champion)."""
+    return _check_version(_fetch_json(version, "championFull.json"), version)
 
 
 def season_versions(versions: list[str]) -> list[str]:
@@ -234,6 +291,10 @@ def _runes_of(version: str) -> list[dict]:
     return flatten_runes(version, fetch_runes(version))
 
 
+def _spells_of(version: str) -> list[dict]:
+    return flatten_spells(fetch_spells(version))
+
+
 def load_season(client) -> int:
     """Charge les champions des patches de la saison PAS ENCORE charges."""
     return _load_missing(client, CHAMPIONS_TABLE, CHAMPIONS_SCHEMA, _champions_of)
@@ -249,8 +310,14 @@ def load_runes_season(client) -> int:
     return _load_missing(client, RUNES_TABLE, RUNES_SCHEMA, _runes_of)
 
 
+def load_spells_season(client) -> int:
+    """Charge les sorts (recharge, cout) des patches PAS ENCORE charges."""
+    return _load_missing(client, SPELLS_TABLE, SPELLS_SCHEMA, _spells_of)
+
+
 if __name__ == "__main__":
     client = bigquery.Client(project="lol-meta-pipeline")
     print(f"{load_season(client)} lignes chargees dans {CHAMPIONS_TABLE}")
     print(f"{load_items_season(client)} lignes chargees dans {ITEMS_TABLE}")
     print(f"{load_runes_season(client)} lignes chargees dans {RUNES_TABLE}")
+    print(f"{load_spells_season(client)} lignes chargees dans {SPELLS_TABLE}")

@@ -28,6 +28,30 @@ sources:
           Une rune par patch de la saison, depuis runesReforged.json (en_US),
           avec son arbre et sa rangee (0 = runes principales).
 
+      - name: ddragon_spells
+        description: >
+          Temps de recharge et cout de chaque sort, par champion, touche et rang
+          (jusqu'au rang max), depuis championFull.json. Source officielle, a
+          jour (verifie contre les notes du 26.22). Contient les Jade_ du 16.15.
+
+      - name: kit_formulas
+        description: >
+          Une formule de sort par patch, champion et touche (Q, W, E, R, P),
+          arbre entier en JSON canonique. Source : CommunityDragon (fichiers du
+          jeu, non officiel). Chargee EN DERNIER : un patch present ici est
+          complet. Contient les 60 entrees Jade_ du 16.15.
+
+      - name: kit_formula_parts
+        description: >
+          Un morceau de formule par ligne : code de stat (0 = AP, 2 = AD...),
+          code de formule (0 = total, 2 = bonus), coefficient, valeur par rang
+          nommee, nombre fixe, valeurs selon le niveau.
+
+      - name: kit_data_values
+        description: >
+          Les valeurs par rang des sorts (rangs 1 a 6). Le Q de Rek'Sai contient
+          deux fois BuffDuration dans le fichier du jeu.
+
   - name: lol_raw_ladder
     description: >
       Ladder EUW (Challenger + Grandmaster, classee solo), charge chaque jour par
