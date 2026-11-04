@@ -34,6 +34,12 @@ sources:
           (jusqu'au rang max), depuis championFull.json. Source officielle, a
           jour (verifie contre les notes du 26.22). Contient les Jade_ du 16.15.
 
+      - name: item_stats
+        description: >
+          Les stats de chaque objet, par patch, depuis les fichiers du jeu
+          (CommunityDragon, items.cdtb.bin.json) : plus complet que Data Dragon
+          (acceleration de competence), identique la ou les deux se recoupent.
+
       - name: kit_formulas
         description: >
           Une formule de sort par patch, champion et touche (Q, W, E, R, P),

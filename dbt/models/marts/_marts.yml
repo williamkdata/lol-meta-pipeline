@@ -186,11 +186,32 @@ models:
         data_tests:
           - accepted_values:
               arguments:
-                values: [ajoute, retire, modifie]
+                values: [ajoute, retire, modifie, renomme]
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
             combination_of_columns: [patch_key, champion_id, slot, calc_name, part_path]
+
+  - name: mart_champion_stat_profile
+    description: >
+      Profil de sensibilite de chaque champion par patch : somme de ses ratios
+      par stat (formules Tooltip et ratios sous 0,01 ecartes, ratios par rang au
+      rang max). Version A du moteur theorique.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [patch_key, champion_id, stat_label]
+
+  - name: mart_item_theory_value
+    description: >
+      Valeur theorique de chaque objet termine pour chaque champion par patch :
+      stats de l'objet x profil du champion, pour 1 000 pieces d'or, rang de
+      l'objet pour le champion, ecart avec le patch precedent. Approximation
+      (passifs des objets ignores).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [patch_key, champion_id, item_id]
 
 unit_tests:
   # Le calcul de la fourchette, fige sur un cas verifie a la main : Ahri mid,
@@ -311,6 +332,11 @@ unit_tests:
              stat: 12, stat_formula: 2, coefficient: 0.04}
           - {patch_key: 1622, champion_id: 950, slot: Q, calc_name: Calc_Damage,
              part_path: "mFormulaParts.0", part_type: NumberCalculationPart, number: 5.0}
+      - input: ref('stg_kit__formulas')
+        rows:
+          - {patch_key: 1621, champion_id: 799, slot: W, calc_name: Calc_Shield, formula: "avant"}
+          - {patch_key: 1622, champion_id: 799, slot: W, calc_name: Calc_Shield, formula: "apres"}
+          - {patch_key: 1622, champion_id: 950, slot: Q, calc_name: Calc_Damage, formula: "neuf"}
       - input: ref('stg_ddragon__champions')
         rows:
           - {patch_key: 1622, champion_id: 799, champion_name: Ambessa}
@@ -325,3 +351,63 @@ unit_tests:
         - {patch_key: 1622, previous_patch_key: 1621, champion_id: 799, champion_name: Ambessa,
            part_path: "mFormulaParts.2", change_kind: retire,
            old_coefficient: null, new_coefficient: null}
+
+  # Orianna 16.22 : TotalDamageTooltip devient TotalDamage, au contenu identique
+  # (meme empreinte md5, verifie le 04/11). Un renommage dans les fichiers, pas
+  # un changement de jeu : tous les morceaux, des deux cotes, sont "renomme".
+  - name: kit_part_changes_recognizes_a_renamed_formula
+    model: mart_kit_part_changes
+    given:
+      - input: ref('stg_kit__parts')
+        rows:
+          - {patch_key: 1621, champion_id: 61, champion_code: Orianna, slot: Q,
+             calc_name: TotalDamageTooltip, part_path: "mFormulaParts.0",
+             part_type: NamedDataValueCalculationPart, data_value: BaseDamage}
+          - {patch_key: 1621, champion_id: 61, champion_code: Orianna, slot: Q,
+             calc_name: TotalDamageTooltip, part_path: "mFormulaParts.1",
+             part_type: StatByCoefficientCalculationPart, stat: 0, stat_formula: 0, coefficient: 0.55}
+          - {patch_key: 1622, champion_id: 61, champion_code: Orianna, slot: Q,
+             calc_name: TotalDamage, part_path: "mFormulaParts.0",
+             part_type: NamedDataValueCalculationPart, data_value: BaseDamage}
+          - {patch_key: 1622, champion_id: 61, champion_code: Orianna, slot: Q,
+             calc_name: TotalDamage, part_path: "mFormulaParts.1",
+             part_type: StatByCoefficientCalculationPart, stat: 0, stat_formula: 0, coefficient: 0.55}
+      - input: ref('stg_kit__formulas')
+        rows:
+          - {patch_key: 1621, champion_id: 61, slot: Q, calc_name: TotalDamageTooltip, formula: "meme contenu"}
+          - {patch_key: 1622, champion_id: 61, slot: Q, calc_name: TotalDamage, formula: "meme contenu"}
+      - input: ref('stg_ddragon__champions')
+        rows: []
+    expect:
+      rows:
+        - {calc_name: TotalDamageTooltip, part_path: "mFormulaParts.0", change_kind: renomme,
+           renamed_counterpart: TotalDamage}
+        - {calc_name: TotalDamageTooltip, part_path: "mFormulaParts.1", change_kind: renomme,
+           renamed_counterpart: TotalDamage}
+        - {calc_name: TotalDamage, part_path: "mFormulaParts.0", change_kind: renomme,
+           renamed_counterpart: TotalDamageTooltip}
+        - {calc_name: TotalDamage, part_path: "mFormulaParts.1", change_kind: renomme,
+           renamed_counterpart: TotalDamageTooltip}
+
+  # Un champion dont les ratios d'attaque bonus font 1,5 + 0,2, et le Couperet
+  # noir (45 d'attaque, 400 PV, 3 000 po) : 1,7 x 45 = 76,5, soit 25,5 pour
+  # 1 000 po. Les PV ne comptent pas : le profil n'en a pas.
+  - name: item_theory_value_multiplies_item_stats_by_the_profile
+    model: mart_item_theory_value
+    given:
+      - input: ref('mart_champion_stat_profile')
+        rows:
+          - {patch_key: 1622, champion_id: 799, champion_code: Ambessa,
+             stat_label: attaque bonus, item_stat: FlatPhysicalDamageMod, total_coefficient: 1.7}
+      - input: ref('stg_ddragon__items')
+        rows:
+          - {patch_key: 1622, item_id: 3071, item_name: Black Cleaver, gold_total: 3000, is_completed: true}
+      - input: ref('stg_item_stats')
+        rows:
+          - {patch_key: 1622, item_id: 3071, stat: FlatPhysicalDamageMod, value: 45.0}
+          - {patch_key: 1622, item_id: 3071, stat: FlatHPPoolMod, value: 400.0}
+          - {patch_key: 1622, item_id: 3071, stat: AbilityHasteMod, value: 20.0}
+    expect:
+      rows:
+        - {patch_key: 1622, champion_id: 799, item_id: 3071, theory_value: 76.5,
+           theory_value_per_1000_gold: 25.5, rank_for_champion: 1}

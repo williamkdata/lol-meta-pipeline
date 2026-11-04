@@ -1,7 +1,7 @@
 """Pipeline LoL quotidien : Data Dragon + Oracle's Elixir + ladder EUW + kits, puis dbt.
 
-    [ingest_ddragon, ingest_oracles_elixir, ingest_ladder, ingest_kits]
-        >> dbt_deps >> dbt_build
+    [ingest_ddragon, ingest_oracles_elixir, ingest_ladder, ingest_kits,
+     ingest_item_stats] >> dbt_deps >> dbt_build
 
 Cadence : une fois par jour, a 14 h 30 UTC. Oracle's Elixir publie son fichier
 une fois par jour (observe : 13 h 05 UTC le 29/10/2026) et demande de ne pas
@@ -50,8 +50,8 @@ with DAG(
     )
 
     # Le ladder EUW par l'API Riot (cle personal) : 1 000 joueurs (Challenger +
-    # Grandmaster), ~1 800 requetes, ~36 min au rythme du quota (mesure du
-    # 03/11 : 825 requetes en 17 min avec la session). Un nouvel essai ne
+    # Grandmaster), 800 parties au plus : ~2 600 requetes, ~52 min au rythme du
+    # quota (04/11, avec 400 parties : 1 802 requetes en 36 min). Un nouvel essai ne
     # recollecte rien : les parties deja en base sont ecartees. Le plafond de
     # 2 h evite qu'un run bloque tienne la place du suivant.
     ingest_ladder = BashOperator(
@@ -69,6 +69,14 @@ with DAG(
         bash_command="cd /opt/airflow && python ingestion/kits.py",
     )
 
+    # Les stats des objets depuis les fichiers du jeu (plus completes que Data
+    # Dragon) : seuls les patches absents de BigQuery sont charges (~15 Mo par
+    # patch). Elles alimentent la valeur theorique des objets (mart_item_theory_value).
+    ingest_item_stats = BashOperator(
+        task_id="ingest_item_stats",
+        bash_command="cd /opt/airflow && python ingestion/item_stats.py",
+    )
+
     # dbt_packages/ n'est pas versionne : on l'installe a chaque run.
     dbt_deps = BashOperator(
         task_id="dbt_deps",
@@ -81,7 +89,13 @@ with DAG(
     )
 
     (
-        [ingest_ddragon, ingest_oracles_elixir, ingest_ladder, ingest_kits]
+        [
+            ingest_ddragon,
+            ingest_oracles_elixir,
+            ingest_ladder,
+            ingest_kits,
+            ingest_item_stats,
+        ]
         >> dbt_deps
         >> dbt_build
     )

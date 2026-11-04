@@ -2,7 +2,10 @@
 -- ENDROIT de l'arbre (part_path) :
 --   modifie : chiffres differents ("bouclier : 1,5 -> 1,8 x l'attaque bonus") ;
 --   ajoute  : morceau nouveau (Riot ajoute un ratio de PV, par exemple) ;
---   retire  : morceau disparu.
+--   retire  : morceau disparu ;
+--   renomme : la formule entiere a seulement change de NOM, au contenu
+--             identique (Orianna 16.22 : TotalDamageTooltip -> TotalDamage).
+--             Ce n'est pas un changement de jeu.
 -- Seuls les champions presents dans les DEUX patches sont compares : un
 -- champion qui sort n'est pas une liste d'"ajouts".
 
@@ -20,6 +23,58 @@ patches AS (
 presences AS (
     -- Quels champions existent a quel patch.
     SELECT DISTINCT patch_index, champion_id FROM morceaux
+),
+
+formules AS (
+    SELECT
+        f.champion_id,
+        f.slot,
+        f.calc_name,
+        f.formula,
+        p.patch_index
+    FROM {{ ref('stg_kit__formulas') }} AS f
+    INNER JOIN patches AS p ON f.patch_key = p.patch_key
+),
+
+apparues AS (
+    -- Anti-jointure : les formules du patch qui N'existaient PAS au precedent.
+    SELECT n.*
+    FROM formules AS n
+    LEFT JOIN formules AS a
+        ON n.patch_index - 1 = a.patch_index
+        AND n.champion_id = a.champion_id
+        AND n.slot = a.slot
+        AND n.calc_name = a.calc_name
+    WHERE a.calc_name IS NULL
+),
+
+disparues AS (
+    -- Anti-jointure : les formules du patch qui N'existent PLUS au suivant.
+    SELECT a.*
+    FROM formules AS a
+    LEFT JOIN formules AS n
+        ON a.patch_index + 1 = n.patch_index
+        AND a.champion_id = n.champion_id
+        AND a.slot = n.slot
+        AND a.calc_name = n.calc_name
+    WHERE n.calc_name IS NULL
+),
+
+renommages AS (
+    -- Une formule disparue et une formule apparue, sur la meme touche, au
+    -- CONTENU IDENTIQUE (texte JSON canonique : meme contenu = meme texte).
+    SELECT
+        ap.patch_index,
+        ap.champion_id,
+        ap.slot,
+        di.calc_name AS old_calc_name,
+        ap.calc_name AS new_calc_name
+    FROM apparues AS ap
+    INNER JOIN disparues AS di
+        ON ap.patch_index = di.patch_index + 1
+        AND ap.champion_id = di.champion_id
+        AND ap.slot = di.slot
+        AND ap.formula = di.formula
 ),
 
 comparaison AS (
@@ -70,7 +125,13 @@ SELECT
     c.calc_name,
     c.part_path,
     c.part_type,
-    c.change_kind,
+    -- Un morceau d'une formule renommee (cote ancien ou nouveau nom) : renomme.
+    IF(r.new_calc_name IS NOT NULL, 'renomme', c.change_kind) AS change_kind,
+    -- L'autre nom de la formule renommee (l'ancien pour le nouveau, et l'inverse).
+    CASE
+        WHEN c.calc_name = r.new_calc_name THEN r.old_calc_name
+        WHEN c.calc_name = r.old_calc_name THEN r.new_calc_name
+    END AS renamed_counterpart,
     c.* EXCEPT (
         patch_index, champion_id, champion_code, slot, calc_name, part_path,
         part_type, change_kind
@@ -83,6 +144,11 @@ INNER JOIN presences AS avant
     ON c.patch_index - 1 = avant.patch_index AND c.champion_id = avant.champion_id
 INNER JOIN presences AS apres
     ON c.patch_index = apres.patch_index AND c.champion_id = apres.champion_id
+LEFT JOIN renommages AS r
+    ON c.patch_index = r.patch_index
+    AND c.champion_id = r.champion_id
+    AND c.slot = r.slot
+    AND c.calc_name IN (r.old_calc_name, r.new_calc_name)
 LEFT JOIN {{ ref('stg_ddragon__champions') }} AS d
     ON p.patch_key = d.patch_key AND c.champion_id = d.champion_id
 WHERE c.change_kind != 'modifie'

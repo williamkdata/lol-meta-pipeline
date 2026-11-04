@@ -1,0 +1,11 @@
+stat,stat_formula,stat_label,item_stat,statut
+0,0,AP totale,FlatMagicDamageMod,verifie
+0,2,AP bonus,FlatMagicDamageMod,deduit
+2,0,attaque totale,FlatPhysicalDamageMod,verifie
+2,2,attaque bonus,FlatPhysicalDamageMod,verifie
+12,0,PV totaux,FlatHPPoolMod,deduit
+12,2,PV bonus,FlatHPPoolMod,verifie
+1,0,armure totale,FlatArmorMod,verifie
+1,2,armure bonus,FlatArmorMod,deduit
+6,0,RM totale,FlatSpellBlockMod,deduit
+6,2,RM bonus,FlatSpellBlockMod,deduit

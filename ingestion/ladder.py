@@ -410,9 +410,12 @@ if __name__ == "__main__":
     options = argparse.ArgumentParser(description="Collecte du ladder EUW")
     # 1 000 = tout Challenger (300) + Grandmaster (700). Le 03/11, avec 300
     # joueurs, 261 parties nouvelles seulement : le plafond de 400 n'etait pas
-    # atteint. ~1 800 requetes, ~36 min au rythme du quota (100 par 2 min).
+    # atteint. Le 04/11, avec 1 000 joueurs : 1 108 disponibles pour 400 prises,
+    # c'est le plafond de parties qui limitait -> 800 (accord de William).
+    # ~1 000 + 2 x 800 = 2 600 requetes, ~52 min au rythme du quota (100 par
+    # 2 min), sous le plafond de 2 h de la tache Airflow.
     options.add_argument("--max-joueurs", type=int, default=1000)
-    options.add_argument("--max-parties", type=int, default=400)
+    options.add_argument("--max-parties", type=int, default=800)
     reglages = options.parse_args()
 
     identite = service_account.Credentials.from_service_account_file(

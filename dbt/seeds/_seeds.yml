@@ -1,0 +1,14 @@
+version: 2
+
+seeds:
+  - name: stat_codes
+    description: >
+      La table de decodage des codes de stats des fichiers du jeu, verifiee par
+      deux sources (projet3_explications.md, 9.7) : (stat, stat_formula) -> nom,
+      et la stat d'objet correspondante. statut = verifie (prouve sur un sort
+      reel avec Meraki) ou deduit. Les codes absents d'ici restent inconnus et
+      ne comptent pas dans le profil des champions.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [stat, stat_formula]

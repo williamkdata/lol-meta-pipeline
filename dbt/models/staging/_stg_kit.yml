@@ -48,3 +48,10 @@ models:
       - dbt_utils.unique_combination_of_columns:
           arguments:
             combination_of_columns: [patch_key, champion_id, slot, spell_rank]
+
+  - name: stg_item_stats
+    description: Une stat par patch, objet et nom de stat (fichiers du jeu).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [patch_key, item_id, stat]
