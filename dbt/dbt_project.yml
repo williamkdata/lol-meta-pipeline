@@ -15,6 +15,10 @@ models:
       +materialized: view
     # Marts : des tables. Elles sont lues souvent (dashboard, analyses) ;
     # les calculer une fois evite de relire le brut a chaque lecture.
+    # Intermediaire : des vues. Une etape de calcul partagee par plusieurs
+    # marts (l'ordre d'achat des objets), ecrite une seule fois.
+    intermediate:
+      +materialized: view
     marts:
       +materialized: table
 
@@ -31,3 +35,16 @@ vars:
   # objets de support ameliores, bottes (1 000 a 1 250) et Mejai (1 500) sous
   # 1 750 ; AUCUN objet entre 1 750 et 2 000 ; les legendaires de 2 000 a 3 500.
   completed_item_min_gold: 2000
+
+  # Premier identifiant des variantes d'autres modes : Data Dragon marque 33
+  # objets a 6 chiffres (323003, 667666...) comme achetables sur la Faille, mais
+  # aucun n'apparait dans 97 210 inventaires ni 403 603 achats du ladder
+  # (16.21-16.22, mesure du 05/11/2026). Garde-fou :
+  # tests/assert_no_mode_variant_item_in_ladder.sql.
+  mode_variant_min_item_id: 100000
+
+  # Nombre minimal de parties pour qu'une famille de build compte comme un
+  # CHOIX propose au joueur (decision de William du 05/11/2026). Le nombre de
+  # parties est toujours affiche ; le classement des choix utilise le bas de la
+  # fourchette de Wilson, pas le taux brut.
+  build_family_min_games: 10

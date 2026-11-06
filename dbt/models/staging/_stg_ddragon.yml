@@ -35,7 +35,8 @@ models:
   - name: stg_ddragon__items
     description: >
       Les objets, un par patch. is_completed = l'objet compte dans un build
-      (termine, sur la Faille, au moins completed_item_min_gold pieces d'or).
+      (termine, sur la Faille, au moins completed_item_min_gold pieces d'or,
+      hors variantes d'autres modes : identifiant >= mode_variant_min_item_id).
     columns:
       - name: item_id
         data_tests: [not_null]
@@ -55,3 +56,27 @@ models:
       - dbt_utils.unique_combination_of_columns:
           arguments:
             combination_of_columns: [rune_id, patch_key]
+
+unit_tests:
+  # Data Dragon marque des variantes d'autres modes (identifiants a 6 chiffres :
+  # 323003 pour le Baton de l'archange 3003) comme achetables sur la Faille.
+  # Aucune n'apparait dans les 403 603 achats du ladder (mesure du 05/11/2026) :
+  # elles ne comptent pas comme objets termines.
+  - name: completed_items_exclude_other_mode_variants
+    model: stg_ddragon__items
+    given:
+      - input: source('lol_raw', 'ddragon_items')
+        format: sql
+        rows: |
+          SELECT '16.22' AS patch, '16.22.1' AS version, 3003 AS item_id,
+            "Archangel's Staff" AS item_name, 2900 AS gold_total,
+            TRUE AS purchasable, TRUE AS on_summoners_rift,
+            CAST([] AS ARRAY<INT64>) AS builds_into, [3070] AS builds_from,
+            3 AS depth, ['SpellDamage', 'Mana'] AS tags
+          UNION ALL
+          SELECT '16.22', '16.22.1', 323003, "Archangel's Staff", 2900, TRUE, TRUE,
+            CAST([] AS ARRAY<INT64>), [3070], 3, ['SpellDamage', 'Mana']
+    expect:
+      rows:
+        - {item_id: 3003, is_completed: true}
+        - {item_id: 323003, is_completed: false}

@@ -1,0 +1,156 @@
+version: 2
+
+models:
+  - name: int_ladder__completed_purchases
+    description: >
+      L'ordre d'achat des objets termines de chaque joueur du ladder : une
+      ligne par joueur et par objet, avec son rang (1 = premier objet termine).
+      Achats annules dans la minute exclus ; un objet revendu puis rachete ne
+      compte qu'une fois, a son premier achat. Partage par mart_ladder_builds
+      et les familles de builds.
+    columns:
+      - name: purchase_rank
+        data_tests: [not_null]
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [match_id, participant_id, item_id]
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [match_id, participant_id, purchase_rank]
+
+  - name: int_ladder__build_families
+    description: >
+      La famille du build de chaque joueur du ladder qui a au moins un objet
+      termine, d'apres les familles principales (seed item_families) de ses 3
+      premiers objets termines, ou de ceux qu'il a si la partie s'est finie
+      avant. Regles, dans l'ordre : majorite (au moins 2 objets de la meme
+      famille), hybride (familles AD et AP melangees), sinon la famille du
+      premier objet. classification_rule dit laquelle a joue.
+    columns:
+      - name: build_family
+        data_tests: [not_null]
+      - name: classification_rule
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [majorite, hybride, premier_objet]
+      - name: items_counted
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 3
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [match_id, participant_id]
+
+unit_tests:
+  # L'ordre du build et l'achat annule : Jinx achete la Lame d'infini (3031),
+  # l'annule 10 s plus tard, achete Collector (6676), puis rachete la Lame.
+  # L'ordre doit etre Collector (1) puis Lame (2) ; l'Epee B. F. (1038), un
+  # composant, n'est pas un objet termine. (Ce test vivait dans
+  # mart_ladder_builds avant que la logique soit partagee, le 06/11/2026.)
+  - name: purchase_order_ignores_an_undone_purchase
+    model: int_ladder__completed_purchases
+    given:
+      - input: ref('stg_ladder__participants')
+        rows:
+          - {match_id: "EUW1_1", participant_id: 4, patch_key: 1621}
+      - input: ref('stg_ddragon__items')
+        rows:
+          - {patch_key: 1621, item_id: 3031, is_completed: true}
+          - {patch_key: 1621, item_id: 6676, is_completed: true}
+          - {patch_key: 1621, item_id: 1038, is_completed: false}
+      - input: ref('stg_ladder__events')
+        rows:
+          - {match_id: "EUW1_1", participant_id: 4, event_type: ITEM_PURCHASED,
+             item_id: 1038, before_item_id: null, timestamp_ms: 400000}
+          - {match_id: "EUW1_1", participant_id: 4, event_type: ITEM_PURCHASED,
+             item_id: 3031, before_item_id: null, timestamp_ms: 600000}
+          - {match_id: "EUW1_1", participant_id: 4, event_type: ITEM_UNDO,
+             item_id: null, before_item_id: 3031, timestamp_ms: 610000}
+          - {match_id: "EUW1_1", participant_id: 4, event_type: ITEM_PURCHASED,
+             item_id: 6676, before_item_id: null, timestamp_ms: 900000}
+          - {match_id: "EUW1_1", participant_id: 4, event_type: ITEM_PURCHASED,
+             item_id: 3031, before_item_id: null, timestamp_ms: 1300000}
+    expect:
+      rows:
+        - {match_id: "EUW1_1", participant_id: 4, item_id: 6676, purchase_rank: 1}
+        - {match_id: "EUW1_1", participant_id: 4, item_id: 3031, purchase_rank: 2}
+
+  # Les trois regles du vote, sur six joueurs :
+  #   1 Jinx   Lame d'infini, Collector, Tueur de krakens -> critique (majorite)
+  #   2 Varus  Lame du roi dechu, Guinsoo, Nashor          -> on_hit (majorite)
+  #   3 Kai'Sa Tueur de krakens, Nashor, Lame d'infini     -> hybride (AD + AP)
+  #   4 Talon  Youmuu, Lame d'infini, Tueur de krakens     -> letalite (premier
+  #            objet : pas de majorite, tout du cote AD)
+  #   5 Ahri   Coiffe de Rabadon seule (partie courte)     -> ap (premier objet)
+  #   6 Ahri   un objet absent de la seed                  -> sans_famille, visible
+  #            au lieu d'etre perdu (le test de couverture previent aussi)
+  #   7 Talon  comme 4, plus Collector en 4e position     -> letalite : seuls les
+  #            3 premiers objets votent (avec le 4e, critique aurait la majorite)
+  #   8 Ezreal Force de la trinite, Manamune, Faim insatiable -> combattant
+  #            (majorite). Une regle "objet signature" (Manamune -> AD mana) a
+  #            ete essayee puis retiree le 06/11/2026 (decision de William) : elle
+  #            reclassait aussi les builds letalite avec Manamune (Jayce, Varus).
+  - name: build_family_majority_hybrid_and_first_item
+    model: int_ladder__build_families
+    given:
+      - input: ref('stg_ladder__participants')
+        rows:
+          - {match_id: "M1", participant_id: 1, patch_key: 1622, team_position: BOTTOM, champion_id: 222, is_win: true}
+          - {match_id: "M1", participant_id: 2, patch_key: 1622, team_position: BOTTOM, champion_id: 110, is_win: true}
+          - {match_id: "M1", participant_id: 3, patch_key: 1622, team_position: BOTTOM, champion_id: 145, is_win: false}
+          - {match_id: "M1", participant_id: 4, patch_key: 1622, team_position: MIDDLE, champion_id: 91, is_win: false}
+          - {match_id: "M1", participant_id: 5, patch_key: 1622, team_position: MIDDLE, champion_id: 103, is_win: true}
+          - {match_id: "M1", participant_id: 6, patch_key: 1622, team_position: MIDDLE, champion_id: 103, is_win: false}
+          - {match_id: "M1", participant_id: 7, patch_key: 1622, team_position: MIDDLE, champion_id: 91, is_win: true}
+          - {match_id: "M1", participant_id: 8, patch_key: 1622, team_position: BOTTOM, champion_id: 81, is_win: true}
+      - input: ref('int_ladder__completed_purchases')
+        rows:
+          - {match_id: "M1", participant_id: 1, item_id: 3031, purchase_rank: 1}
+          - {match_id: "M1", participant_id: 1, item_id: 6676, purchase_rank: 2}
+          - {match_id: "M1", participant_id: 1, item_id: 6672, purchase_rank: 3}
+          - {match_id: "M1", participant_id: 2, item_id: 3153, purchase_rank: 1}
+          - {match_id: "M1", participant_id: 2, item_id: 3124, purchase_rank: 2}
+          - {match_id: "M1", participant_id: 2, item_id: 3115, purchase_rank: 3}
+          - {match_id: "M1", participant_id: 3, item_id: 6672, purchase_rank: 1}
+          - {match_id: "M1", participant_id: 3, item_id: 3115, purchase_rank: 2}
+          - {match_id: "M1", participant_id: 3, item_id: 3031, purchase_rank: 3}
+          - {match_id: "M1", participant_id: 4, item_id: 3142, purchase_rank: 1}
+          - {match_id: "M1", participant_id: 4, item_id: 3031, purchase_rank: 2}
+          - {match_id: "M1", participant_id: 4, item_id: 6672, purchase_rank: 3}
+          - {match_id: "M1", participant_id: 5, item_id: 3089, purchase_rank: 1}
+          - {match_id: "M1", participant_id: 6, item_id: 9999, purchase_rank: 1}
+          - {match_id: "M1", participant_id: 7, item_id: 3142, purchase_rank: 1}
+          - {match_id: "M1", participant_id: 7, item_id: 3031, purchase_rank: 2}
+          - {match_id: "M1", participant_id: 7, item_id: 6672, purchase_rank: 3}
+          - {match_id: "M1", participant_id: 7, item_id: 6676, purchase_rank: 4}
+          - {match_id: "M1", participant_id: 8, item_id: 3078, purchase_rank: 1}
+          - {match_id: "M1", participant_id: 8, item_id: 3004, purchase_rank: 2}
+          - {match_id: "M1", participant_id: 8, item_id: 2517, purchase_rank: 3}
+      - input: ref('item_families')
+        rows:
+          - {item_id: 3031, family: critique}
+          - {item_id: 6676, family: critique}
+          - {item_id: 6672, family: on_hit}
+          - {item_id: 3153, family: on_hit}
+          - {item_id: 3124, family: on_hit}
+          - {item_id: 3115, family: ap}
+          - {item_id: 3142, family: letalite}
+          - {item_id: 3089, family: ap}
+          - {item_id: 3078, family: combattant}
+          - {item_id: 3004, family: ad_mana}
+          - {item_id: 2517, family: combattant}
+    expect:
+      rows:
+        - {participant_id: 1, build_family: critique, classification_rule: majorite, items_counted: 3}
+        - {participant_id: 2, build_family: on_hit, classification_rule: majorite, items_counted: 3}
+        - {participant_id: 3, build_family: hybride, classification_rule: hybride, items_counted: 3}
+        - {participant_id: 4, build_family: letalite, classification_rule: premier_objet, items_counted: 3}
+        - {participant_id: 5, build_family: ap, classification_rule: premier_objet, items_counted: 1}
+        - {participant_id: 6, build_family: sans_famille, classification_rule: premier_objet, items_counted: 1}
+        - {participant_id: 7, build_family: letalite, classification_rule: premier_objet, items_counted: 3}
+        - {participant_id: 8, build_family: combattant, classification_rule: majorite, items_counted: 3}

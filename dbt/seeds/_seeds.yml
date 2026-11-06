@@ -12,3 +12,33 @@ seeds:
       - dbt_utils.unique_combination_of_columns:
           arguments:
             combination_of_columns: [stat, stat_formula]
+
+  - name: item_families
+    description: >
+      La famille de chaque objet termine de la Faille (16.21-16.22, 105 objets).
+      family = la famille principale, qui classe le build par vote majoritaire.
+      secondary_families = les autres familles de l'objet, separees par "|"
+      (la Guinsoo va dans un build on-hit ET AP ; "hybride" = objet des builds
+      AD + AP). is_situational = objet de reponse a la composition adverse
+      (Mikael contre beaucoup de controle). Pre-remplie par Claude
+      (prototypes/prefamilles.py), relue par William le 06/11/2026
+      (suivi/projets/relecture_familles_objets.md).
+    config:
+      column_types:
+        item_id: int64
+        item_name: string
+        family: string
+        secondary_families: string
+        is_situational: boolean
+    columns:
+      - name: item_id
+        data_tests: [unique, not_null]
+      - name: family
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [critique, letalite, on_hit, ap, combattant, tank,
+                         enchanteur, support, ad_mana]
+      - name: is_situational
+        data_tests: [not_null]

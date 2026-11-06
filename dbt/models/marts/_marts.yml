@@ -110,6 +110,41 @@ models:
           arguments:
             expression: "win_rate_low <= win_rate AND win_rate <= win_rate_high"
 
+  - name: mart_ladder_build_families
+    description: >
+      Les familles de builds du ladder : pour chaque champion a son poste et par
+      patch, combien de parties dans chaque famille (critique, letalite, on-hit,
+      AP, hybride...), le taux de victoire et sa fourchette de Wilson. Une
+      famille est un CHOIX a partir de build_family_min_games parties (decision
+      de William du 05/11/2026) ; les choix sont classes par le bas de la
+      fourchette, pas par le taux brut. Le nombre de choix d'un champion sort
+      des donnees (decision du 05/11 : 2-3 en general, plus pour les
+      polyvalents). games_with_three_items dit combien de builds etaient
+      complets (les autres sont classes sur 1 ou 2 objets).
+    columns:
+      - name: build_family
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [critique, letalite, on_hit, ap, combattant, tank,
+                         enchanteur, support, ad_mana, hybride, sans_famille]
+      - name: share_of_champion_games
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [patch_key, team_position, champion_id, build_family]
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "win_rate_low <= win_rate AND win_rate <= win_rate_high"
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "(is_choice AND choice_rank IS NOT NULL) OR (NOT is_choice AND choice_rank IS NULL)"
+
   - name: mart_meta_diffusion
     description: >
       Grille patch x champion (tous les champions Data Dragon) : taux de pick en
@@ -234,10 +269,11 @@ unit_tests:
            matches: 4, games: 4, wins: 3, win_rate: 0.75,
            win_rate_low: 0.3006, win_rate_high: 0.9544, pick_rate: 1.0}
 
-  # L'ordre du build et l'achat annule : Jinx achete la Lame d'infini (3031),
-  # l'annule 10 s plus tard, achete Collector (6676), puis rachete la Lame.
-  # Le chemin doit etre Collector puis Lame, pas Lame puis Collector.
-  - name: build_path_ignores_an_undone_purchase
+  # Le chemin de build = les deux premiers objets de l'ordre d'achat (la regle
+  # des achats annules est testee dans int_ladder__completed_purchases depuis
+  # le 06/11/2026). Jinx : Collector (rang 1) puis Lame d'infini (rang 2) ; le
+  # 3e objet n'entre pas dans le chemin.
+  - name: build_path_takes_the_first_two_purchases
     model: mart_ladder_builds
     given:
       - input: ref('stg_ladder__participants')
@@ -248,25 +284,44 @@ unit_tests:
         rows:
           - {patch_key: 1621, item_id: 3031, item_name: "Infinity Edge", is_completed: true}
           - {patch_key: 1621, item_id: 6676, item_name: "The Collector", is_completed: true}
-          - {patch_key: 1621, item_id: 1038, item_name: "B. F. Sword", is_completed: false}
-      - input: ref('stg_ladder__events')
+          - {patch_key: 1621, item_id: 6672, item_name: "Kraken Slayer", is_completed: true}
+      - input: ref('int_ladder__completed_purchases')
         rows:
-          - {match_id: "EUW1_1", participant_id: 4, event_type: ITEM_PURCHASED,
-             item_id: 1038, before_item_id: null, timestamp_ms: 400000}
-          - {match_id: "EUW1_1", participant_id: 4, event_type: ITEM_PURCHASED,
-             item_id: 3031, before_item_id: null, timestamp_ms: 600000}
-          - {match_id: "EUW1_1", participant_id: 4, event_type: ITEM_UNDO,
-             item_id: null, before_item_id: 3031, timestamp_ms: 610000}
-          - {match_id: "EUW1_1", participant_id: 4, event_type: ITEM_PURCHASED,
-             item_id: 6676, before_item_id: null, timestamp_ms: 900000}
-          - {match_id: "EUW1_1", participant_id: 4, event_type: ITEM_PURCHASED,
-             item_id: 3031, before_item_id: null, timestamp_ms: 1300000}
+          - {match_id: "EUW1_1", participant_id: 4, item_id: 6676, purchase_rank: 1}
+          - {match_id: "EUW1_1", participant_id: 4, item_id: 3031, purchase_rank: 2}
+          - {match_id: "EUW1_1", participant_id: 4, item_id: 6672, purchase_rank: 3}
     expect:
       rows:
         - {patch_key: 1621, team_position: BOTTOM, champion_id: 222,
            first_item_id: 6676, first_item_name: "The Collector",
            second_item_id: 3031, second_item_name: "Infinity Edge",
            games: 1, wins: 1, share_of_champion_games: 1.0, win_rate: 1.0}
+
+  # Les familles de builds d'un champion, seuil de choix abaisse a 2 parties
+  # pour le test : Jinx critique 3 parties (2 victoires), on-hit 1 partie.
+  # Critique est un choix (rang 1), on-hit non (sous le seuil) ; part des
+  # parties 0,75 / 0,25 ; un seul choix pour Jinx.
+  - name: build_families_choice_threshold_and_rank
+    model: mart_ladder_build_families
+    overrides:
+      vars:
+        build_family_min_games: 2
+    given:
+      - input: ref('int_ladder__build_families')
+        rows:
+          - {patch_key: 1622, team_position: BOTTOM, champion_id: 222, match_id: "M1", participant_id: 1, is_win: true, build_family: critique, items_counted: 3}
+          - {patch_key: 1622, team_position: BOTTOM, champion_id: 222, match_id: "M2", participant_id: 1, is_win: true, build_family: critique, items_counted: 2}
+          - {patch_key: 1622, team_position: BOTTOM, champion_id: 222, match_id: "M3", participant_id: 1, is_win: false, build_family: critique, items_counted: 3}
+          - {patch_key: 1622, team_position: BOTTOM, champion_id: 222, match_id: "M4", participant_id: 1, is_win: true, build_family: on_hit, items_counted: 3}
+      - input: ref('stg_ddragon__champions')
+        rows:
+          - {patch_key: 1622, champion_id: 222, champion_name: Jinx}
+    expect:
+      rows:
+        - {build_family: critique, champion_name: Jinx, games: 3, wins: 2, games_with_three_items: 2,
+           share_of_champion_games: 0.75, is_choice: true, choice_rank: 1, choices_for_champion: 1}
+        - {build_family: on_hit, champion_name: Jinx, games: 1, wins: 1, games_with_three_items: 1,
+           share_of_champion_games: 0.25, is_choice: false, choice_rank: null, choices_for_champion: 1}
 
   # Les cinq statuts du delai de diffusion. Pro collecte des le patch 1,
   # ladder seulement depuis le patch 3 :
