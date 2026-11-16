@@ -68,6 +68,92 @@ models:
           arguments:
             combination_of_columns: [patch_key, stat]
 
+  - name: int_champions__base_stats
+    description: >
+      Les stats de base de chaque champion : une ligne par patch et par
+      champion, une colonne par stat (fiche du fichier du jeu, traduite en
+      staging). Un champ absent prend la valeur par defaut du jeu, pas
+      toujours 0 : hp_regen_base 1 PV par seconde, resource_base 100, gains
+      par niveau 0, resource_type "aucune". Unites : regenerations PAR
+      SECONDE ; as_per_level en pourcentage (2.5 = +2,5 % par niveau) ;
+      as_ratio = la vitesse d'attaque qui sert de base aux bonus (0 pour
+      Jhin). resource_type : mana, energie, aucune, ou autre (fureur,
+      chaleur, rage...) ; le code reste dans resource_type_code.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [patch_key, champion_id]
+    columns:
+      # Stats SANS valeur par defaut : presentes pour les 3 794 champions x
+      # patches (mesure du 09/11/2026). Si l'une manque, c'est sans doute un
+      # nouveau renommage de Riot : le test echoue.
+      - name: hp_base
+        data_tests: [not_null]
+      - name: hp_per_level
+        data_tests: [not_null]
+      - name: armor_base
+        data_tests: [not_null]
+      - name: mr_base
+        data_tests: [not_null]
+      - name: mr_per_level
+        data_tests: [not_null]
+      - name: ad_base
+        data_tests: [not_null]
+      - name: as_base
+        data_tests: [not_null]
+      - name: as_ratio
+        data_tests: [not_null]
+      - name: attack_range
+        data_tests: [not_null]
+      - name: move_speed
+        data_tests: [not_null]
+      - name: crit_damage
+        data_tests: [not_null]
+      - name: resource_regen_base
+        data_tests: [not_null]
+      - name: resource_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [mana, energie, aucune, autre]
+
+  - name: int_champions__stats_by_level
+    description: >
+      Les stats "nues" de chaque champion (sans objets, runes ni passifs) a
+      chaque niveau, de 1 a champion_max_level (20). Une ligne par patch,
+      champion et niveau. Croissance non lineaire (macro level_growth),
+      verifiee sur les vraies stats des parties. as_bonus_pct = bonus de
+      vitesse d'attaque gagne par les niveaux, en % ; attack_speed = vitesse
+      d'attaque totale (le bonus est multiplie par as_ratio). Regenerations
+      par seconde.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [patch_key, champion_id, level]
+    columns:
+      - name: level
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: "{{ var('champion_max_level') }}"
+      - name: hp
+        data_tests: [not_null]
+      - name: hp_regen
+        data_tests: [not_null]
+      - name: armor
+        data_tests: [not_null]
+      - name: mr
+        data_tests: [not_null]
+      - name: ad
+        data_tests: [not_null]
+      - name: attack_speed
+        data_tests: [not_null]
+      - name: resource
+        data_tests: [not_null]
+      - name: resource_regen
+        data_tests: [not_null]
+
 unit_tests:
   # L'ordre du build et l'achat annule : Jinx achete la Lame d'infini (3031),
   # l'annule 10 s plus tard, achete Collector (6676), puis rachete la Lame.
@@ -222,3 +308,49 @@ unit_tests:
         - {patch_key: 1622, stat: FlatPhysicalDamageMod, reference_item_name: Long Sword, gold_per_unit: 35.0}
         - {patch_key: 1622, stat: FlatHPPoolMod, reference_item_name: Ruby Crystal, gold_per_unit: 2.6667}
         - {patch_key: 1622, stat: PercentAttackSpeedMod, reference_item_name: Dagger, gold_per_unit: 2500.0}
+  # Un champ absent du fichier du jeu prend la valeur par defaut du JEU, pas
+  # toujours 0 : 1 PV par seconde de regeneration (Zac), 100 de ressource
+  # (Tryndamere), 0 pour un gain par niveau (Jhin : vitesse d'attaque), aucune
+  # ressource (Zac). Une valeur PRESENTE, meme a 0, n'est jamais remplacee
+  # (la ressource de base de Zac, le ratio de vitesse d'attaque de Jhin). Les
+  # nombres du fichier sont arrondis (4.400000095... -> 4.4). Valeurs reelles
+  # du 16.22.
+  - name: base_stats_fill_game_defaults_not_zero
+    model: int_champions__base_stats
+    given:
+      - input: ref('stg_kit__champion_record')
+        rows:
+          - {patch_key: 1622, patch: '16.22', champion_id: 154, champion_code: Zac, stat: hp_regen_per_level, value: 0.10000000149011612}
+          - {patch_key: 1622, patch: '16.22', champion_id: 154, champion_code: Zac, stat: resource_base, value: 0.0}
+          - {patch_key: 1622, patch: '16.22', champion_id: 23, champion_code: Tryndamere, stat: hp_regen_base, value: 1.7000000476837158}
+          - {patch_key: 1622, patch: '16.22', champion_id: 23, champion_code: Tryndamere, stat: resource_type_code, value: 4.0}
+          - {patch_key: 1622, patch: '16.22', champion_id: 202, champion_code: Jhin, stat: hp_regen_base, value: 0.75}
+          - {patch_key: 1622, patch: '16.22', champion_id: 202, champion_code: Jhin, stat: ad_per_level, value: 4.400000095367432}
+          - {patch_key: 1622, patch: '16.22', champion_id: 202, champion_code: Jhin, stat: as_ratio, value: 0.0}
+          - {patch_key: 1622, patch: '16.22', champion_id: 202, champion_code: Jhin, stat: resource_base, value: 300.0}
+          - {patch_key: 1622, patch: '16.22', champion_id: 202, champion_code: Jhin, stat: resource_per_level, value: 50.0}
+          - {patch_key: 1622, patch: '16.22', champion_id: 202, champion_code: Jhin, stat: resource_type_code, value: 0.0}
+    expect:
+      rows:
+        - {patch_key: 1622, champion_code: Zac, hp_regen_base: 1.0, hp_regen_per_level: 0.1, ad_per_level: 0.0, as_per_level: 0.0, as_ratio: null, resource_base: 0.0, resource_per_level: 0.0, resource_type_code: null, resource_type: aucune}
+        - {patch_key: 1622, champion_code: Tryndamere, hp_regen_base: 1.7, hp_regen_per_level: 0.0, ad_per_level: 0.0, as_per_level: 0.0, as_ratio: null, resource_base: 100.0, resource_per_level: 0.0, resource_type_code: 4, resource_type: autre}
+        - {patch_key: 1622, champion_code: Jhin, hp_regen_base: 0.75, hp_regen_per_level: 0.0, ad_per_level: 4.4, as_per_level: 0.0, as_ratio: 0.0, resource_base: 300.0, resource_per_level: 50.0, resource_type_code: 0, resource_type: mana}
+  # Les stats d'Ahri (16.22, valeurs reelles) aux niveaux 1 a 3 (le niveau
+  # maximum est ramene a 3 pour le test). Valeurs calculees a la main avec la
+  # courbe de LoL : niveau 2 = 0,72 gain ; niveau 3 = 1,475 gain (une ligne
+  # droite donnerait 1 et 2 : 694 et 798 PV au lieu de 664,88 et 743,4). La
+  # vitesse d'attaque grandit avec le RATIO (0,625), pas avec la base (0,668).
+  - name: stats_by_level_follow_the_lol_growth_curve
+    model: int_champions__stats_by_level
+    overrides:
+      vars:
+        champion_max_level: 3
+    given:
+      - input: ref('int_champions__base_stats')
+        rows:
+          - {patch_key: 1622, patch: '16.22', champion_id: 103, champion_code: Ahri, hp_base: 590.0, hp_per_level: 104.0, hp_regen_base: 0.5, hp_regen_per_level: 0.12, armor_base: 21.0, armor_per_level: 4.2, mr_base: 30.0, mr_per_level: 1.3, ad_base: 53.0, ad_per_level: 3.0, as_base: 0.668, as_per_level: 2.2, as_ratio: 0.625, attack_range: 550.0, crit_damage: 2.0, move_speed: 330.0, resource_base: 418.0, resource_per_level: 25.0, resource_regen_base: 1.6, resource_regen_per_level: 0.16, resource_type: mana}
+    expect:
+      rows:
+        - {champion_code: Ahri, level: 1, hp: 590.0, armor: 21.0, attack_speed: 0.668, as_bonus_pct: 0.0, resource: 418.0}
+        - {champion_code: Ahri, level: 2, hp: 664.88, armor: 24.024, attack_speed: 0.6779, as_bonus_pct: 1.584, resource: 436.0}
+        - {champion_code: Ahri, level: 3, hp: 743.4, armor: 27.195, attack_speed: 0.6883, as_bonus_pct: 3.245, resource: 454.875}

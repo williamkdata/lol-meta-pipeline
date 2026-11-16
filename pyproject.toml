@@ -14,9 +14,10 @@ dependencies = [
 target-version = "py312"
 line-length = 88
 # Ou vit le code du projet : sans cette ligne, ruff classe les modules de
-# ingestion/ parmi les bibliotheques externes et range mal les imports.
+# ingestion/ et simulateur/ parmi les bibliotheques externes et range mal les
+# imports.
 # Meme dossier que le pythonpath de pytest, plus bas.
-src = ["ingestion", "tests"]
+src = ["ingestion", "simulateur", "tests"]
 
 [tool.ruff.lint]
 # F  : erreurs reelles (import inutilise, variable non definie)
@@ -29,7 +30,7 @@ src = ["ingestion", "tests"]
 select = ["F", "E", "W", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.pytest.ini_options]
-pythonpath = ["ingestion"]
+pythonpath = ["ingestion", "simulateur"]
 testpaths = ["tests"]
 
 [dependency-groups]

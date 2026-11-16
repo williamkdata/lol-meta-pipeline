@@ -10,7 +10,7 @@ Pipeline de données sur la meta de *League of Legends* : quels champions, build
 >
 > **Depuis le 06/11/2026 : un bulletin de patch.** Trois mesures, recalculées à chaque patch, disent si l'on peut croire les builds : la fidélité de notre lecture des achats, le duel entre le build le plus joué et sa meilleure alternative, et l'« expérience naturelle » du patch (le moteur théorique prédit le sens d'un changement de Riot, le ladder confirme ou contredit).
 >
-> **Depuis le 09/11/2026 : vers un simulateur de combat.** Le but : proposer un build à partir des stats des champions et des objets (stats pures, effets, coût). Première étape en cours : les stats de base de chaque champion, lues dans les fichiers du jeu, sur les 22 patches de la saison.
+> **Depuis le 09/11/2026 : vers un simulateur de combat.** Le but : proposer un build à partir des stats des champions et des objets (stats pures, effets, coût). Étape 1 terminée (16/11) : les stats de chaque champion à chaque niveau, lues dans les fichiers du jeu et vérifiées sur les vraies parties. Étape 2 en cours : le mannequin (les attaques de base sont simulées ; les sorts suivent).
 
 ## Sources
 
@@ -106,12 +106,26 @@ La popularité s'auto-entretient : beaucoup de joueurs copient la même tier lis
 
 Additionner des stats ne suffit pas : un objet a des effets, et un champion n'a pas les mêmes stats au niveau 1 et au niveau 11. Le but fixé : un moteur qui propose un build à partir des stats des champions et des objets, **stats pures, effets et coût**. Le plan : simuler un combat contre un mannequin, comme dans l'outil d'entraînement, mais en calcul. Quatre étapes : les données ; un mannequin sans effets ; les effets des objets, **lus automatiquement** dans les textes de Riot (un catalogue écrit à la main vieillirait à chaque saison) ; puis des scénarios tirés du ladder et un build construit objet par objet. Le ladder sert de juge.
 
-**Étape 1, en cours : les stats de base de chaque champion.**
+**Étape 1, terminée (16/11) : les stats de chaque champion, à chaque niveau.**
 - **La source** : la fiche du champion dans le fichier du jeu (CommunityDragon), déjà téléchargé pour les kits. Data Dragon, la source officielle, n'a pas le ratio de vitesse d'attaque (0 pour Jhin, dont la vitesse d'attaque ne grandit pas comme celle des autres), et **donne 0 d'AD par niveau à tous les champions depuis le 16.5**.
 - **Riot a renommé les champs au 16.5** (`baseHP` → `baseHPModifiable`, `baseSpellBlock` → `baseMR`…), et certains arrivent **hachés** (`{01262a25}`). Un nom haché est l'empreinte FNV-1a 32 bits du nom en minuscules : FNV-1a(`mrperlevel`) = `01262a25`, vérifié en calculant. CommunityDragon remplace l'empreinte par le nom quand il le trouve (au 16.16 pour celui-ci). Le 16.5 est aussi le patch où l'AD par niveau de Data Dragon tombe à 0 : son générateur cherchait probablement encore l'ancien nom.
-- **Le brut garde tout, sous le nom du fichier** (186 282 nombres, 22 patches). Une seed traduit chaque orthographe connue (45) vers 21 stats, et prévoit déjà le nom en clair des 4 empreintes pas encore décodées. Un nouveau renommage de Riot ne passera pas en silence : les tests de l'étape suivante échoueront sur une stat obligatoire manquante, ou sur une stat qui disparaît d'un patch à l'autre.
+- **Le brut garde tout, sous le nom du fichier** (186 282 nombres, 22 patches). Une seed traduit chaque orthographe connue (45) vers 21 stats, et prévoit déjà le nom en clair des 4 empreintes pas encore décodées.
 - **Recoupé avec Data Dragon sur les 22 patches** (~60 000 comparaisons) : identique à 3 exceptions près, en début de saison, sauf l'AD par niveau.
 - **Un champ absent n'est pas toujours 0** : il prend la valeur par défaut du jeu. Mettre 0 partout aurait donné 0 régénération de PV à Zac (le jeu : 1 PV par seconde) et 0 de fureur maximale à Tryndamere (le jeu : 100), sans aucune erreur visible.
+- **La fiche complète** (`int_champions__base_stats`, une ligne par champion et par patch, 3 794 lignes) : les stats en colonnes, les valeurs par défaut du jeu. **Un nouveau renommage de Riot ne passera pas en silence** : une stat obligatoire vide fait échouer un test ; une stat qui disparaît d'un patch au suivant déclenche un avertissement. C'est le seul test qui voit le renommage d'une stat à valeur par défaut, car le 0 boucherait le trou sans laisser de case vide (vérifié par sabotage : 171 champions signalés).
+- **Les stats à chaque niveau** (`int_champions__stats_by_level`, 75 880 lignes, niveaux 1 à 20) : la croissance de LoL n'est pas une ligne droite. Le gain arrive plus tard : Ahri au niveau 6 a 1 000,8 PV, et non 1 110.
+  - **La formule est vérifiée sur les vraies parties, pas sur la parole du wiki.** Les timelines brutes donnent, chaque minute, les vraies stats de chaque joueur. Sur 1 500 parties, la valeur la plus fréquente par champion et par niveau tombe sur la courbe de LoL dans 94 % des cas (armure et RM), contre moins de 1 % pour une ligne droite ; 140 champions sur 164 n'ont aucun écart.
+  - L'écart le plus net (Jhin, +8 d'armure et de RM à tous les niveaux) venait d'un objet de départ, trouvé dans les achats : 75 % des Jhin commencent par le Heaume de Doran.
+  - **Les niveaux 19 et 20 existent** pour les joueurs du haut (1 984 fins de partie au 16.22), et la courbe continue après 18 : mesuré, pas supposé.
+
+**Étape 2, en cours : le mannequin sans effets** (Python, dossier `simulateur/`). Un combat se déroule dans le temps (coups, temps de recharge, mana) : il est simulé en Python, à partir des données que dbt prépare. Des fonctions pures, testées une à une (tests écrits d'abord, sabotages vus échouer) :
+- **la part des dégâts qui passe l'armure**, 100 / (100 + armure) : vérifiée sur 31 160 attaques de base réelles (les récapitulatifs de mort donnent chaque coup reçu). La formule gagne dans toutes les tranches d'armure, loin devant les autres essayées ;
+- **la pénétration** (le % d'abord, puis la létalité, jamais sous 0) : tirée du wiki, **pas mesurable avec nos données**, car l'API ne montre pas la létalité. Le code le dit ;
+- **les stats avec objets** : 12 stats additionnées, les % de pénétration multipliés, 11 stats ignorées exprès ; **une stat d'objet inconnue lève une erreur** au lieu d'être perdue ;
+- **le critique, mesuré** : les coups critiques ont leur propre nom dans le récapitulatif de mort. Le pic est à 200 % (et vers 230 % avec la Lame d'infini, qui donne +30 %). Le fichier du jeu le dit aussi, et connaît le cas d'Ashe (100 %) ;
+- **les dégâts par seconde et le temps pour tuer** avec les attaques de base : les coups tombent un par un, le premier tout de suite. Jinx niveau 11 (Lame d'infini, Lord Dominik, Dague) tue Zed niveau 11 sans objet en 7 coups, 8,1 s.
+
+Reste à faire pour l'étape 2 : les sorts (type de dégâts, et lesquels des calculs d'un sort sont des dégâts), puis valider le mannequin sur de vrais coups simples.
 
 ## Choix notables
 
@@ -199,6 +213,8 @@ Volume par partie du ladder, mesuré sur le premier run réel : ~70 Ko dans BigQ
 - **Les formules des sorts viennent d'une source communautaire** (CommunityDragon), non officielle : à valider avant toute demande de clé de production. Une formule seulement renommée (contenu identique) est reconnue comme telle ; si Riot la renomme **et** en change la structure, elle reste signalée comme un retrait plus un ajout.
 - **La létalité n'a pas encore de prix** : elle est chargée depuis le 09/11, mais aucun objet de base ne donne que de la létalité, donc la règle du prix d'un point ne s'applique pas. Un prix dérivé est prévu. Même chose pour le vol de vie, la ténacité, les pénétrations, les soins et boucliers : non valorisés.
 - **Le moteur théorique ne voit ni les coûts en mana, ni les temps de recharge, ni les dégâts de base, ni les effets des objets** : c'est l'angle mort que le bulletin a révélé (Mel au 16.22), et que le simulateur doit combler.
+- **Le simulateur ne connaît encore ni les sorts ni les effets** : attaques de base seulement, dégâts moyens (le critique compte en moyenne), sans le temps d'armer le premier coup ni la régénération de la cible. La pénétration suit le wiki, sans mesure possible avec nos données.
+- **Les groupes d'objets ne sont pas encore chargés** : le jeu interdit certains cumuls (un seul objet du groupe « Dernier souffle » : Lord Dominik, Rappel mortel… ; une seule paire de bottes ; 87 groupes limités au 16.22). À charger avant le moteur de build, qui ne doit jamais proposer un build impossible.
 - **Les verdicts du bulletin sont instables en début de patch** : beaucoup de duels se renversent en un ou deux jours. Ils ne doivent pas être montrés aux joueurs avant d'avoir tenu dans la durée.
 - **La famille d'un objet ne dépend pas de qui l'achète.** La Force de la trinité est un objet de combattant : le build d'Ezreal (Trinité, Manamune, Faim insatiable) est donc classé « combattant », alors qu'un joueur dirait « Ezreal Manamune ». Choix assumé (la règle qui corrigeait ce cas en cassait d'autres).
 - **Peu de choix par champion pour l'instant** : au 16.22, après le run du 06/11, 42 couples champion × poste ont deux familles à 10 parties ou plus, et 2 en ont trois (Jax TOP : combattant, AP, hybride ; Sona support : enchanteur, tank, AP). La veille, 16 couples en avaient deux et aucun trois. Ce n'est pas l'algorithme mais le volume : il grandit chaque jour.
@@ -215,7 +231,10 @@ airflow/          image, docker-compose, DAG quotidien lol_daily
 dbt/              staging (vues) -> intermédiaire (vues) -> marts (tables), seeds
                   relues (codes de stats, familles d'objets, objets transformés,
                   noms des champs de la fiche), macros, tests de données
-tests/            pytest hors ligne : faux clients HTTP, BigQuery et Storage
+simulateur/       simulateur de combat (Python pur) : degats, stats avec objets,
+                  temps pour tuer le mannequin
+tests/            pytest hors ligne : faux clients HTTP, BigQuery et Storage ;
+                  fonctions du simulateur
 prototypes/       essais : LLM local (Ollama) qui appelle un outil sur un mart ;
                   pré-classement des familles d'objets avant relecture
 ```

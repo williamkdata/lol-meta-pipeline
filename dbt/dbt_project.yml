@@ -69,3 +69,10 @@ vars:
   # pourcentage y vaudrait moins de 10 objets.
   build_fidelity_min_rate: 0.99
   build_fidelity_min_items: 1000
+
+  # Niveau maximum d'un champion (simulateur). 18 en general, mais les joueurs
+  # du haut (TOP) montent jusqu'a 20 : mesure du 16/11/2026 au 16.22, 1 051
+  # fins de partie au niveau 19 et 933 au niveau 20, toutes en TOP. La
+  # croissance des stats continue apres 18 (verifie sur la vitesse d'attaque
+  # reelle des parties : la courbe prolongee tombe juste, l'arretee jamais).
+  champion_max_level: 20
