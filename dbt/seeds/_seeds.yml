@@ -42,3 +42,103 @@ seeds:
                          enchanteur, support, ad_mana]
       - name: is_situational
         data_tests: [not_null]
+
+  - name: stat_usefulness_by_class
+    description: >
+      BROUILLON a relire par William (09/11/2026), en dev seulement. L'utilite
+      de chaque stat pour chaque classe de champion (les etiquettes de Riot
+      dans Data Dragon : Fighter, Tank, Mage, Assassin, Marksman, Support) :
+      0 = inutile, 0,5 = utile, 1 = essentielle. AP et (sauf tireurs) AD sont
+      a 0 : leur utilite vient des RATIOS du kit (mart_champion_stat_profile),
+      pas de la classe. La ligne KitRatios (pas une stat) dit a quel point
+      la classe exploite les ratios de son kit : 1 pour les classes de degats,
+      0,5 pour Tank et Support (Leona a des ratios d'AP mais ne build pas AP).
+      Sert au moteur theorique version B (mart_item_gold_value).
+    config:
+      column_types:
+        champion_class: string
+        stat: string
+        stat_label: string
+        usefulness: float64
+    columns:
+      - name: champion_class
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [Fighter, Tank, Mage, Assassin, Marksman, Support]
+      - name: usefulness
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [0, 0.5, 1]
+                quote: false
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [champion_class, stat]
+
+  - name: item_transformations
+    description: >
+      Les objets termines de la Faille qui se TRANSFORMENT en cours de partie
+      (Manamune -> Muramana quand sa charge de mana est pleine). L'objet achete
+      n'est alors plus dans l'inventaire de fin de partie sous son nom d'achat.
+      Source : le champ specialRecipe de Data Dragon 16.22.1 (la forme
+      transformee y pointe vers l'objet d'origine), restreint aux objets
+      termines de la Faille. Sert au controle de fidelite des builds
+      (mart_ladder_build_fidelity). Une transformation nouvelle a un patch
+      ferait baisser la fidelite : l'alerte nomme alors l'objet absent.
+    config:
+      column_types:
+        item_id: int64
+        item_name: string
+        transformed_item_id: int64
+        transformed_item_name: string
+    columns:
+      - name: item_id
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_ddragon__items')
+                field: item_id
+      - name: transformed_item_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_ddragon__items')
+                field: item_id
+
+  - name: champion_record_fields
+    description: >
+      La table de traduction des champs de la fiche du champion (fichier du jeu,
+      lol_raw.kit_champion_record) vers un nom de stat stable. Le meme chiffre
+      change de nom selon le patch : Riot a renomme les champs au 16.5
+      (baseHP -> baseHPModifiable, baseSpellBlock -> baseMR) et certains noms
+      arrivent haches ({01262a25}) tant que CommunityDragon ne les a pas
+      decodes. Un nom hache est l'empreinte FNV-1a 32 bits du vrai nom en
+      minuscules : {01262a25} = mrPerLevel, decode par CommunityDragon au 16.16.
+      statut = observe (vu dans les donnees, patches dans note) ou prevu (nom en
+      clair d'une empreinte observee, calcule le 09/11/2026 : pret pour le jour
+      ou CommunityDragon le decodera). Recoupe avec Data Dragon sur 22 patches
+      (projet3_explications.md, 9.38).
+    config:
+      column_types:
+        field: string
+        stat: string
+        statut: string
+        note: string
+    columns:
+      - name: field
+        data_tests: [unique, not_null]
+      - name: stat
+        data_tests: [not_null]
+      - name: statut
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [observe, prevu]

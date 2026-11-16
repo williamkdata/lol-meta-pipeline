@@ -24,10 +24,13 @@ KIT_TABLES = {
     "formulas": f"{KIT_DATASET}.kit_formulas",
     "parts": f"{KIT_DATASET}.kit_formula_parts",
     "values": f"{KIT_DATASET}.kit_data_values",
+    # La fiche du champion (stats de base, gain par niveau, ressource) :
+    # ajoutee le 09/11/2026 pour le simulateur.
+    "record": f"{KIT_DATASET}.kit_champion_record",
 }
 # Charges dans cet ordre : kit_formulas EN DERNIER sert de marqueur, un patch
 # qui y figure est complet.
-ORDRE_CHARGEMENT = ("values", "parts", "formulas")
+ORDRE_CHARGEMENT = ("values", "parts", "record", "formulas")
 
 
 def _champ(nom, type_, mode="NULLABLE"):
@@ -68,6 +71,16 @@ KIT_SCHEMAS = {
         _champ("value_name", "STRING", "REQUIRED"),
         _champ("spell_rank", "INTEGER", "REQUIRED"),
         _champ("value", "FLOAT"),
+    ],
+    # Pas de touche ni de sort : la fiche concerne tout le champion.
+    "record": [
+        _champ("patch", "STRING", "REQUIRED"),
+        _champ("champion_id", "INTEGER", "REQUIRED"),
+        _champ("champion_code", "STRING", "REQUIRED"),
+        # Le chemin du nombre dans la fiche, sous le nom du fichier du jeu
+        # (baseHPModifiable, primaryAbilityResource.{726ee5cd}...).
+        _champ("field", "STRING", "REQUIRED"),
+        _champ("value", "FLOAT", "REQUIRED"),
     ],
 }
 
@@ -209,17 +222,55 @@ def flatten_data_values(sort: dict) -> list[dict]:
     return lignes
 
 
+def flatten_champion_record(fichier: dict) -> list[dict]:
+    """La fiche du champion (stats de base, gain par niveau, ressource...) ->
+    une ligne par nombre : {"field": chemin dans la fiche, "value": nombre}.
+
+    Brut et fidele : TOUS les nombres de la fiche, sous leur nom du fichier.
+    Riot renomme ces champs en cours de saison (baseHP au 16.1, baseHPModifiable
+    au 16.22 ; baseSpellBlock devenu baseMR) : le choix des champs et leur
+    renommage se font en staging, ou un test signale tout champ attendu qui
+    manque. Data Dragon n'est pas une alternative : au 16.22, il donne 0 d'AD
+    gagnee par niveau aux 173 champions (Ahri : 3 dans le fichier du jeu)."""
+    racine = next(cle for cle in fichier if cle.endswith(SUFFIXE_FICHE))
+    lignes = []
+    # Une pile de (chemin, noeud) a ouvrir : on en retire un, on range ses
+    # nombres, on empile ses enfants ; jusqu'a ce qu'elle soit vide.
+    a_ouvrir = [("", fichier[racine])]
+    while a_ouvrir:
+        chemin, noeud = a_ouvrir.pop()
+        if isinstance(noeud, dict):
+            for cle, enfant in noeud.items():
+                # {"baseValue": 590.0, "__type": "ModifiableFloat"} : la valeur
+                # garde le nom de son champ (baseHPModifiable), sans ".baseValue".
+                suite = chemin if cle == "baseValue" else _joindre(chemin, cle)
+                a_ouvrir.append((suite, enfant))
+        elif isinstance(noeud, list):
+            for i, enfant in enumerate(noeud):
+                a_ouvrir.append((_joindre(chemin, str(i)), enfant))
+        # True est AUSSI un entier pour Python : exclu explicitement.
+        elif isinstance(noeud, int | float) and not isinstance(noeud, bool):
+            lignes.append({"field": chemin, "value": float(noeud)})
+    return lignes
+
+
 def kit_rows(patch: str, champion_id: int, champion_code: str, fichier: dict) -> dict:
-    """Tout le kit d'un champion pour un patch, en trois listes de lignes :
+    """Tout le kit d'un champion pour un patch, en quatre listes de lignes :
     formulas (une par formule, arbre entier en texte canonique), parts (une par
-    morceau de formule), values (une par valeur et par rang). Seuls les sorts
-    des touches Q, W, E, R et du passif comptent."""
+    morceau de formule), values (une par valeur et par rang), record (une par
+    nombre de la fiche du champion : stats de base...). Pour les sorts, seuls
+    ceux des touches Q, W, E, R et du passif comptent."""
     commun = {
         "patch": patch,
         "champion_id": champion_id,
         "champion_code": champion_code,
     }
-    lignes = {"formulas": [], "parts": [], "values": []}
+    lignes = {
+        "formulas": [],
+        "parts": [],
+        "values": [],
+        "record": [{**commun, **nombre} for nombre in flatten_champion_record(fichier)],
+    }
 
     for touche, chemin in spell_slots(fichier).items():
         sort = fichier[chemin].get("mSpell") or {}
@@ -286,9 +337,10 @@ def load_patch_kits(
     return bilan
 
 
-def loaded_kit_patches(client) -> set[str]:
-    """Les patches deja complets en base. Vide si la table n'existe pas encore."""
-    sql = f"SELECT DISTINCT patch FROM `{KIT_TABLES['formulas']}`"
+def loaded_kit_patches(client, table: str = "formulas") -> set[str]:
+    """Les patches deja en base dans une table du kit (par defaut kit_formulas,
+    le marqueur). Vide si la table n'existe pas encore."""
+    sql = f"SELECT DISTINCT patch FROM `{KIT_TABLES[table]}`"
     try:
         lignes = client.query(sql).result()
     except NotFound:
@@ -306,14 +358,22 @@ def season_patches(versions: list[str]) -> dict[str, str]:
 
 
 def load_kits_season(versions: list[str], session, client) -> list[dict]:
-    """Charge les kits des patches de la saison PAS ENCORE en base."""
-    deja = loaded_kit_patches(client)
+    """Charge, pour chaque patch de la saison, les tables du kit ou il MANQUE.
+
+    Un nouveau patch est charge dans toutes les tables. Une table ajoutee plus
+    tard (la fiche des champions, le 09/11/2026) est completee seule, patch par
+    patch, sans recharger les autres : rien n'est charge deux fois."""
+    # Une requete par table : {"values": {"16.1", ...}, "record": set(), ...}
+    deja = {table: loaded_kit_patches(client, table) for table in ORDRE_CHARGEMENT}
     bilans = []
     for patch, version in season_patches(versions).items():
-        if patch in deja:
+        manquantes = tuple(t for t in ORDRE_CHARGEMENT if patch not in deja[t])
+        if not manquantes:
             continue
         champions = champions_of(version, session)
-        bilans.append(load_patch_kits(patch, champions, session, client))
+        bilans.append(
+            load_patch_kits(patch, champions, session, client, tables=manquantes)
+        )
     return bilans
 
 

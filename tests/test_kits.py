@@ -1,9 +1,12 @@
 import json
 
-from fakes import FakeBigQuery, FakeHttp, FakeResponse
+from fakes import FakeBigQuery, FakeHttp, FakeQueryJob, FakeResponse
 from kits import (
+    KIT_SCHEMAS,
     KIT_TABLES,
+    ORDRE_CHARGEMENT,
     champion_file_url,
+    flatten_champion_record,
     flatten_data_values,
     flatten_formula,
     kit_rows,
@@ -31,6 +34,9 @@ def fichier_ambessa():
                 "AmbessaRAbility/AmbessaR",
             ],
             "passiveSpell": "AmbessaPassive",
+            # Deux vraies stats de sa fiche au 16.21 (relevees le 09/11).
+            "baseHPModifiable": {"baseValue": 630.0, "__type": "ModifiableFloat"},
+            "hpPerLevelModifiable": {"baseValue": 110.0, "__type": "ModifiableFloat"},
             "__type": "CharacterRecord",
         },
         SORTS + "AmbessaQAbility/AmbessaQ": {"mSpell": {}, "__type": "SpellObject"},
@@ -401,6 +407,81 @@ def test_flatten_data_values_without_any_value():
     assert flatten_data_values({}) == []
 
 
+# --- flatten_champion_record ----------------------------------------------------
+
+AHRI = "Characters/Ahri/CharacterRecords/Root"
+
+
+def fiche_ahri_16_22():
+    """La fiche d'Ahri au 16.22, reduite (releve du 09/11/2026) : stats dans des
+    enveloppes {"baseValue": ...}, ressource a cles hachees, une liste de
+    nombres, un booleen, du texte, et un sort qui n'est pas la fiche."""
+    return {
+        AHRI: {
+            "baseHPModifiable": {"baseValue": 590.0, "__type": "ModifiableFloat"},
+            "damagePerLevelModifiable": {"baseValue": 3.0, "__type": "ModifiableFloat"},
+            "baseMR": {"baseValue": 30.0, "__type": "ModifiableFloat"},
+            "critDamageMultiplier": 2.0,
+            "primaryAbilityResource": {
+                "arType": 0,
+                "{726ee5cd}": {"baseValue": 418.0, "__type": "ModifiableFloat"},
+                "__type": "AbilityResourceSlotInfo",
+            },
+            "secondaryAbilityResource": {
+                "arType": 12,
+                "arAllowMaxValueToBeOverridden": True,
+            },
+            "mAbilitySlotCC": [1, 0],
+            "passiveName": "game_character_passiveName_Ahri",
+            "__type": "CharacterRecord",
+        },
+        "Characters/Ahri/Spells/AhriQAbility/AhriQ": {"mCastTime": 0.25},
+    }
+
+
+def test_flatten_champion_record_gives_every_number_of_the_record():
+    """Tous les nombres de la fiche, sous leur chemin dans le fichier :
+    l'enveloppe {"baseValue": ...} garde le nom de son champ."""
+    lignes = flatten_champion_record(fiche_ahri_16_22())
+
+    assert {ligne["field"]: ligne["value"] for ligne in lignes} == {
+        "baseHPModifiable": 590.0,
+        "damagePerLevelModifiable": 3.0,
+        "baseMR": 30.0,
+        "critDamageMultiplier": 2.0,
+        "primaryAbilityResource.arType": 0.0,
+        "primaryAbilityResource.{726ee5cd}": 418.0,
+        "secondaryAbilityResource.arType": 12.0,
+        "mAbilitySlotCC.0": 1.0,
+        "mAbilitySlotCC.1": 0.0,
+    }
+
+
+def test_flatten_champion_record_ignores_booleans_text_and_other_entries():
+    """True est aussi un entier pour Python : sans exclusion, il passerait pour 1.
+    Le temps d'incantation du Q n'est pas dans la fiche : ignore."""
+    champs = {ligne["field"] for ligne in flatten_champion_record(fiche_ahri_16_22())}
+
+    assert "secondaryAbilityResource.arAllowMaxValueToBeOverridden" not in champs
+    assert "passiveName" not in champs
+    assert not any("mCastTime" in champ for champ in champs)
+
+
+def test_flatten_champion_record_keeps_the_older_field_names_as_they_are():
+    """Au 16.1, les memes stats s'appelaient baseHP (nombre nu) et
+    baseSpellBlock. On les garde telles quelles : le renommage se fait en
+    staging, ou un test signale un champ attendu qui manque."""
+    fichier = {AHRI: {"baseHP": 590.0, "baseSpellBlock": 30.0, "hpPerLevel": 104.0}}
+
+    lignes = flatten_champion_record(fichier)
+
+    assert sorted((ligne["field"], ligne["value"]) for ligne in lignes) == [
+        ("baseHP", 590.0),
+        ("baseSpellBlock", 30.0),
+        ("hpPerLevel", 104.0),
+    ]
+
+
 # --- kit_rows ---------------------------------------------------------------
 
 
@@ -482,6 +563,37 @@ def test_kit_rows_includes_the_values_by_rank():
     }
 
 
+def test_kit_rows_includes_the_champion_record():
+    """La fiche du champion (stats de base) : une ligne par nombre, avec le
+    patch et le champion ; pas de touche ni de sort, elle concerne tout le
+    champion."""
+    fiche = lignes_ambessa()["record"]
+
+    assert sorted(fiche, key=lambda ligne: ligne["field"]) == [
+        {
+            "patch": "16.21",
+            "champion_id": 799,
+            "champion_code": "Ambessa",
+            "field": "baseHPModifiable",
+            "value": 630.0,
+        },
+        {
+            "patch": "16.21",
+            "champion_id": 799,
+            "champion_code": "Ambessa",
+            "field": "hpPerLevelModifiable",
+            "value": 110.0,
+        },
+    ]
+
+
+def test_every_kit_table_has_a_schema_and_a_place_in_the_loading_order():
+    """Une table ajoutee sans schema, ou oubliee dans l'ordre de chargement,
+    ne serait jamais chargee : les trois listes doivent dire la meme chose."""
+    assert set(KIT_SCHEMAS) == set(KIT_TABLES) == set(ORDRE_CHARGEMENT)
+    assert ORDRE_CHARGEMENT[-1] == "formulas"
+
+
 def test_kit_rows_ignores_spells_behind_no_key():
     """Le bouclier secondaire du W n'est derriere aucune touche : pas de ligne."""
     fichier = kit_ambessa()
@@ -533,6 +645,7 @@ def test_load_patch_kits_loads_the_formulas_last():
     assert [destination for _, destination, _ in client.appels] == [
         KIT_TABLES["values"],
         KIT_TABLES["parts"],
+        KIT_TABLES["record"],
         KIT_TABLES["formulas"],
     ]
 
@@ -582,6 +695,69 @@ def test_load_kits_season_loads_only_the_missing_patches():
     assert [bilan["patch"] for bilan in bilans] == ["16.21"]
     fichiers = [url for url, _ in http.appels if "communitydragon" in url]
     assert fichiers == [champion_file_url("16.21", "Ambessa")]
+
+
+class FakeBigQueryParTable(FakeBigQuery):
+    """Un faux BigQuery qui repond, pour chaque table du kit, SES patches deja
+    charges (le faux de base repond la meme chose a toutes les requetes)."""
+
+    def __init__(self, patches_par_table):
+        super().__init__()
+        self.patches_par_table = patches_par_table
+
+    def query(self, sql):
+        self.requetes.append(sql)
+        for table, patches in self.patches_par_table.items():
+            # Les accents graves evitent de confondre kit_formulas et
+            # kit_formula_parts (le premier nom est le debut du second).
+            if f"`{KIT_TABLES[table]}`" in sql:
+                return FakeQueryJob([{"patch": patch} for patch in patches])
+        raise AssertionError(f"requete inattendue : {sql}")
+
+
+def test_loaded_kit_patches_reads_the_table_it_is_asked_for():
+    client = FakeBigQueryParTable({"record": ["16.20"], "formulas": ["16.21"]})
+
+    assert loaded_kit_patches(client, "record") == {"16.20"}
+    assert loaded_kit_patches(client) == {"16.21"}
+
+
+def test_load_kits_season_completes_only_the_missing_tables():
+    """La fiche (ajoutee le 09/11) manque au 16.21 ; les trois autres tables y
+    sont : seule la fiche est chargee, rien n'est charge deux fois."""
+    http = serveur(patches_publies=("16.21", "16.20"))
+    deja = ["16.21", "16.20"]
+    client = FakeBigQueryParTable(
+        {"values": deja, "parts": deja, "formulas": deja, "record": ["16.20"]}
+    )
+
+    bilans = load_kits_season(["16.21.1", "16.20.1"], http, client)
+
+    assert [bilan["patch"] for bilan in bilans] == ["16.21"]
+    assert [destination for _, destination, _ in client.appels] == [
+        KIT_TABLES["record"]
+    ]
+
+
+def test_load_kits_season_loads_a_new_patch_in_every_table():
+    http = serveur(patches_publies=("16.21", "16.20"))
+    client = FakeBigQueryParTable({table: ["16.20"] for table in ORDRE_CHARGEMENT})
+
+    load_kits_season(["16.21.1", "16.20.1"], http, client)
+
+    assert [destination for _, destination, _ in client.appels] == [
+        KIT_TABLES[table] for table in ORDRE_CHARGEMENT
+    ]
+
+
+def test_load_kits_season_downloads_nothing_when_every_table_is_complete():
+    http = serveur(patches_publies=("16.21", "16.20"))
+    deja = ["16.21", "16.20"]
+    client = FakeBigQueryParTable({table: deja for table in ORDRE_CHARGEMENT})
+
+    assert load_kits_season(["16.21.1", "16.20.1"], http, client) == []
+    assert not [url for url, _ in http.appels if "communitydragon" in url]
+    assert client.appels == []
 
 
 def test_load_patch_kits_can_load_only_some_tables():

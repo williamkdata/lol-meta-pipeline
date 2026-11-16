@@ -22,6 +22,17 @@ models:
     marts:
       +materialized: table
 
+# En attente de relecture par William (09/11/2026) : l'utilite des stats selon
+# la classe du champion n'existe qu'en dev, comme un champion sur le PBE (le
+# serveur de test). Le dossier dbt est lu tel quel par l'Airflow de prod : sans
+# cette regle, un brouillon non relu partirait en prod au run suivant. Le
+# modele qui l'utilise (mart_item_gold_value) porte la meme regle. A retirer
+# apres la relecture.
+seeds:
+  lol_meta:
+    stat_usefulness_by_class:
+      +enabled: "{{ (target.name != 'prod') | as_bool }}"
+
 vars:
   # Duree minimale d'une partie du ladder pour compter dans la meta. Le vote
   # d'abandon normal s'ouvre a 15 min : une partie finie avant est un remake ou
@@ -48,3 +59,13 @@ vars:
   # parties est toujours affiche ; le classement des choix utilise le bas de la
   # fourchette de Wilson, pas le taux brut.
   build_family_min_games: 10
+
+  # Fidelite des builds (bulletin de patch, mesure 1) : part des 3 premiers
+  # objets termines retrouves dans l'inventaire de fin de partie, objets
+  # transformes compris. Mesure du 06/11/2026 : 99,84 % au 16.21 (24 830
+  # objets), 99,79 % au 16.22 (36 571) ; sans les transformations, ~98 %.
+  # Sous 99 %, tests/assert_build_fidelity_above_threshold.sql avertit. Pas
+  # d'alerte sous 1 000 objets (premier jour d'un patch) : un point de
+  # pourcentage y vaudrait moins de 10 objets.
+  build_fidelity_min_rate: 0.99
+  build_fidelity_min_items: 1000

@@ -24,6 +24,47 @@ OBJETS = {
 }
 
 
+# Quatre objets reels du 16.22 dont certaines stats s'ecrivent SANS le "m" du
+# debut dans les fichiers du jeu (bug trouve le 09/11/2026 : jamais chargees).
+SANS_M = {
+    # Echo de Luden : son mana (flatMPPoolMod).
+    "Items/6655": {
+        "itemID": 6655,
+        "price": 450,
+        "epicness": 5,
+        "mAbilityHasteMod": 10.0,
+        "mFlatMagicDamageMod": 100.0,
+        "flatMPPoolMod": 600.0,
+    },
+    # Lame fantome de Youmuu : sa letalite (PhysicalLethality).
+    "Items/3142": {
+        "itemID": 3142,
+        "mPercentMovementSpeedMod": 0.03999999910593033,
+        "mFlatPhysicalDamageMod": 55.0,
+        "PhysicalLethality": 18.0,
+    },
+    # Lame de Doran : son omnivampirisme ; sellBackModifier contient "Mod"
+    # mais n'est pas une stat (la part du prix rendue a la revente).
+    "Items/1055": {
+        "itemID": 1055,
+        "mFlatHPPoolMod": 80.0,
+        "mFlatPhysicalDamageMod": 10.0,
+        "PercentOmnivampMod": 0.02500000037252903,
+        "sellBackModifier": 0.4000000059604645,
+    },
+    # Charme feerique : sa regeneration de mana ; et des nombres qui ne sont
+    # pas des stats, avec ou sans "m".
+    "Items/1004": {
+        "itemID": 1004,
+        "percentBaseMPRegenMod": 0.5,
+        "specialRecipe": 3003,
+        "{4f958685}": 2526,
+        "LastMajorChangeMajorPatchVersion": 16,
+        "mRequiredLevel": 9,
+    },
+}
+
+
 def stats_de(lignes, item_id):
     return {
         ligne["stat"]: ligne["value"] for ligne in lignes if ligne["item_id"] == item_id
@@ -50,6 +91,36 @@ def test_flatten_item_stats_ignores_fields_that_are_not_stats():
     assert "CanBeSold" not in stats
     assert "ItemCalloutSpectator" not in stats
     assert "axStack" not in stats
+
+
+def test_flatten_item_stats_keeps_stats_written_without_the_m_prefix():
+    """Mana, letalite, omnivampirisme, regeneration de mana : ecrits sans "m"
+    dans les fichiers du jeu. Nommes comme les autres (majuscule au debut)."""
+    lignes = flatten_item_stats("16.22", SANS_M)
+
+    assert stats_de(lignes, 6655) == {
+        "AbilityHasteMod": 10.0,
+        "FlatMagicDamageMod": 100.0,
+        "FlatMPPoolMod": 600.0,
+    }
+    assert stats_de(lignes, 3142) == {
+        "PercentMovementSpeedMod": 0.03999999910593033,
+        "FlatPhysicalDamageMod": 55.0,
+        "PhysicalLethality": 18.0,
+    }
+    assert stats_de(lignes, 1004) == {"PercentBaseMPRegenMod": 0.5}
+
+
+def test_flatten_item_stats_ignores_numbers_that_are_not_stats_even_without_m():
+    """La part de revente contient "Mod" (sellBackModifier) : pas une stat.
+    Ni le niveau requis, ni la recette, ni la version du dernier changement."""
+    stats = stats_de(flatten_item_stats("16.22", SANS_M), 1055)
+
+    assert stats == {
+        "FlatHPPoolMod": 80.0,
+        "FlatPhysicalDamageMod": 10.0,
+        "PercentOmnivampMod": 0.02500000037252903,
+    }
 
 
 def test_flatten_item_stats_keeps_only_numbered_items():

@@ -46,6 +46,28 @@ models:
           arguments:
             combination_of_columns: [match_id, participant_id]
 
+  - name: int_items__stat_gold_price
+    description: >
+      Le prix en or d'un point de chaque stat, par patch (methode de la
+      rentabilite en or) : l'objet de base le moins cher qui ne donne que
+      cette stat. Au 16.22 : AD 35 (Long Sword), AP 20 (Amplifying Tome),
+      PV 2,67 (Ruby Crystal), armure 20 (Cloth Armor), resistance magique 20
+      (Null-Magic Mantle), acceleration 50 (Glowing Mote), vitesse d'attaque
+      25 le % (Dagger), critique 40 le % (Cloak of Agility). Les stats sans
+      objet de base n'ont pas de prix (non valorisees).
+    columns:
+      - name: gold_per_unit
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: false
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [patch_key, stat]
+
 unit_tests:
   # L'ordre du build et l'achat annule : Jinx achete la Lame d'infini (3031),
   # l'annule 10 s plus tard, achete Collector (6676), puis rachete la Lame.
@@ -154,3 +176,49 @@ unit_tests:
         - {participant_id: 6, build_family: sans_famille, classification_rule: premier_objet, items_counted: 1}
         - {participant_id: 7, build_family: letalite, classification_rule: premier_objet, items_counted: 3}
         - {participant_id: 8, build_family: combattant, classification_rule: majorite, items_counted: 3}
+
+  # Le prix en or d'une stat = l'objet de base le moins cher qui ne donne que
+  # cette stat. Au 16.22 :
+  #   AD : Long Sword 350 or / 10 -> 35 ; Cull (450 / 7) et B. F. Sword
+  #        (1 300 / 40) sont plus chers : pas la reference ;
+  #   PV : Ruby Crystal 400 / 150 -> 2,6667 ;
+  #   Vitesse d'attaque : Dagger 250 / 0,10 -> 2 500 (par 100 %) ;
+  #   ecartes : Doran's Blade (deux stats) ; un objet FABRIQUE fictif a
+  #   partir d'un Ruby, 350 or pour 200 PV (1,75 le PV) : moins cher que le
+  #   Ruby, il serait choisi si le filtre « objet de base » manquait (trou
+  #   trouve par le sabotage du 09/11) ; une variante d'un autre mode
+  #   (identifiant a 6 chiffres) ; un objet invendable. Dagger a 0,1 stocke
+  #   0,10000000149 : la valeur est arrondie avant la division.
+  - name: stat_gold_price_uses_the_cheapest_single_stat_basic_item
+    model: int_items__stat_gold_price
+    given:
+      - input: ref('stg_ddragon__items')
+        format: sql
+        rows: |
+          SELECT 1622 AS patch_key, 1036 AS item_id, 'Long Sword' AS item_name, 350 AS gold_total,
+            TRUE AS purchasable, TRUE AS on_summoners_rift, CAST([] AS ARRAY<INT64>) AS builds_from
+          UNION ALL SELECT 1622, 1083, 'Cull', 450, TRUE, TRUE, CAST([] AS ARRAY<INT64>)
+          UNION ALL SELECT 1622, 1038, 'B. F. Sword', 1300, TRUE, TRUE, CAST([] AS ARRAY<INT64>)
+          UNION ALL SELECT 1622, 1028, 'Ruby Crystal', 400, TRUE, TRUE, CAST([] AS ARRAY<INT64>)
+          UNION ALL SELECT 1622, 1042, 'Dagger', 250, TRUE, TRUE, CAST([] AS ARRAY<INT64>)
+          UNION ALL SELECT 1622, 1055, "Doran's Blade", 450, TRUE, TRUE, CAST([] AS ARRAY<INT64>)
+          UNION ALL SELECT 1622, 9001, 'Objet fabrique (fictif)', 350, TRUE, TRUE, [1028]
+          UNION ALL SELECT 1622, 221036, 'Long Sword', 100, TRUE, TRUE, CAST([] AS ARRAY<INT64>)
+          UNION ALL SELECT 1622, 9999, 'Invendable', 100, FALSE, TRUE, CAST([] AS ARRAY<INT64>)
+      - input: ref('stg_item_stats')
+        rows:
+          - {patch_key: 1622, item_id: 1036, stat: FlatPhysicalDamageMod, value: 10.0}
+          - {patch_key: 1622, item_id: 1083, stat: FlatPhysicalDamageMod, value: 7.0}
+          - {patch_key: 1622, item_id: 1038, stat: FlatPhysicalDamageMod, value: 40.0}
+          - {patch_key: 1622, item_id: 1028, stat: FlatHPPoolMod, value: 150.0}
+          - {patch_key: 1622, item_id: 1042, stat: PercentAttackSpeedMod, value: 0.10000000149011612}
+          - {patch_key: 1622, item_id: 1055, stat: FlatPhysicalDamageMod, value: 10.0}
+          - {patch_key: 1622, item_id: 1055, stat: FlatHPPoolMod, value: 80.0}
+          - {patch_key: 1622, item_id: 9001, stat: FlatHPPoolMod, value: 200.0}
+          - {patch_key: 1622, item_id: 221036, stat: FlatPhysicalDamageMod, value: 10.0}
+          - {patch_key: 1622, item_id: 9999, stat: FlatPhysicalDamageMod, value: 10.0}
+    expect:
+      rows:
+        - {patch_key: 1622, stat: FlatPhysicalDamageMod, reference_item_name: Long Sword, gold_per_unit: 35.0}
+        - {patch_key: 1622, stat: FlatHPPoolMod, reference_item_name: Ruby Crystal, gold_per_unit: 2.6667}
+        - {patch_key: 1622, stat: PercentAttackSpeedMod, reference_item_name: Dagger, gold_per_unit: 2500.0}

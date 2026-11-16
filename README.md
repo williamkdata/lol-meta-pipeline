@@ -7,6 +7,10 @@ Pipeline de données sur la meta de *League of Legends* : quels champions, build
 > **Depuis le 04/11/2026 : vers un assistant pour les joueurs.** Le projet devient la base d'un outil d'aide aux joueurs, dans l'esprit de Blitz. Premier moteur construit : un **moteur théorique** qui lit les formules des sorts dans les fichiers du jeu et détecte, le jour même d'un patch, **ce qui a changé** — validé contre les notes de patch officielles.
 >
 > **Depuis le 06/11/2026 : les familles de builds.** Chaque objet terminé a une famille (critique, létalité, on-hit, AP, combattant, tank…), relue par un joueur expérimenté ; chaque build du ladder est classé par le vote de ses trois premiers objets. Le nombre de choix proposés pour un champion **sort des données** : un mage n'a qu'une famille, Varus en a deux (on-hit ou létalité).
+>
+> **Depuis le 06/11/2026 : un bulletin de patch.** Trois mesures, recalculées à chaque patch, disent si l'on peut croire les builds : la fidélité de notre lecture des achats, le duel entre le build le plus joué et sa meilleure alternative, et l'« expérience naturelle » du patch (le moteur théorique prédit le sens d'un changement de Riot, le ladder confirme ou contredit).
+>
+> **Depuis le 09/11/2026 : vers un simulateur de combat.** Le but : proposer un build à partir des stats des champions et des objets (stats pures, effets, coût). Première étape en cours : les stats de base de chaque champion, lues dans les fichiers du jeu, sur les 22 patches de la saison.
 
 ## Sources
 
@@ -15,7 +19,7 @@ Pipeline de données sur la meta de *League of Legends* : quels champions, build
 | Ladder EUW | API Riot Games (Challenger + Grandmaster, classée solo) | quotidienne | clé *personal* |
 | Compétition pro | Oracle's Elixir | quotidienne | fichier public, via l'API Google Drive |
 | Référentiel | Data Dragon (champions, objets, runes, temps de recharge et coûts des sorts) | à chaque patch | public, sans clé |
-| Formules des sorts | CommunityDragon (fichiers du jeu extraits, **source communautaire, non officielle**) | à chaque patch | public, sans clé |
+| Formules des sorts, stats des champions et des objets | CommunityDragon (fichiers du jeu extraits, **source communautaire, non officielle**) | à chaque patch | public, sans clé |
 
 Le temps réel des matchs professionnels n'est pas accessible : il passe par un portail réservé aux équipes et partenaires de Riot. Oracle's Elixir en est lui-même en aval.
 
@@ -63,6 +67,11 @@ API Riot ─────────┘    brut gzip,        lol_raw (permanent)
 | `mart_champion_stat_profile` | Avec quelles stats chaque champion grandit-il, et dans quelle proportion ? | patch × champion × stat |
 | `mart_item_theory_value` | Que vaut chaque objet pour chaque champion, d'après ses ratios ? Qu'est-ce que le patch a changé ? | patch × champion × objet |
 | `mart_ladder_build_families` | Quelles familles de builds (critique, létalité, AP, hybride…) pour ce champion, combien de parties, quel résultat ? Lesquelles sont de vrais choix ? | patch × poste × champion × famille |
+| `mart_ladder_build_fidelity` | Lit-on bien les builds ? Les 3 premiers objets achetés sont-ils dans l'inventaire de fin de partie ? | patch |
+| `mart_ladder_build_duels` | Le build le plus joué gagne-t-il plus que sa meilleure alternative ? Confirmé, pépite ou non départagé | patch × poste × champion × niveau (famille ou chemin) |
+| `mart_patch_predictions` | Que prédit la théorie, le jour du patch et avant toute partie, pour chaque objet ou champion changé ? | patch × sujet |
+| `mart_patch_experiments` | Le ladder a-t-il bougé dans le sens prédit (part de jeu, victoires) ? | patch × sujet |
+| `mart_patch_bulletin` | Le résumé des trois mesures du bulletin | patch |
 
 Chaque taux de victoire du ladder est accompagné de sa **fourchette à 95 %** (`win_rate_low`, `win_rate_high`).
 
@@ -78,7 +87,31 @@ Le jour d'un nouveau patch, il n'existe encore aucune partie : un outil fondé s
 
 **La valeur théorique des objets (version A)** : pour chaque champion, un **profil de sensibilité** — la somme de ses ratios par stat (ratios identiques d'un même sort comptés une fois ; ratios sous 0,01, d'une autre unité, écartés ; ratios par rang au rang maximum) — multiplié par les **stats de chaque objet** (lues dans les fichiers du jeu, plus complètes que Data Dragon : 1 174 recoupements, 0 écart), pour 1 000 pièces d'or. Le moteur traduit ainsi un changement d'objet en « pour qui il devient meilleur » : au 16.22, le Lien de sang du suzerain passe de 30 à 40 d'attaque (annoncé dans les notes), et ressort comme la plus forte variation, pour Pyke, Naafiri, Corki… Limite assumée : seules les stats des ratios comptent (pas encore les PV, l'accélération de compétence ni les passifs des objets) ; les classements sont donc naïfs pour les combattants.
 
-Prochaines étapes : valoriser les stats « universelles » selon le rôle du champion ; combiner théorie et parties jouées (la théorie pèse le plus au début d'un patch, quand les parties manquent et que beaucoup de joueurs gardent leurs anciens builds) ; puis confronter la théorie aux parties réellement jouées.
+**La version B, la valeur en or utile (en dev seulement, 09/11)** : une seule unité, l'or. Le prix d'un point de chaque stat vient de la boutique : l'objet de base le moins cher qui ne donne que cette stat (Épée longue : 35 or le point d'AD ; Cristal de saphir : 1 or le point de mana). Ce prix est en prod. Chaque stat d'un objet compte ensuite **seulement si elle sert au champion**, selon sa classe et ses ratios. Les top 5 s'améliorent nettement (Ambessa : Couperet noir au lieu d'objets de tireur ; Malphite et Leona : Convergence de Zeke au lieu de Rabadon). Mais la relecture par un joueur expérimenté a montré les limites d'une addition de stats : la classe est trop grossière (un combattant peut être AD ou AP), et les effets des objets ne comptent pas. D'où le simulateur, plus bas. Ce brouillon reste en dev : une règle de `dbt_project.yml` l'exclut de la prod, qui lit le dossier dbt tel quel.
+
+## Le bulletin de patch : prouver les builds par les chiffres
+
+La popularité s'auto-entretient : beaucoup de joueurs copient la même tier list, et « populaire » ne veut pas dire « bon ». Le bulletin cherche des juges qui ne copient personne. Il est recalculé à chaque patch, une ligne par patch dans `mart_patch_bulletin`.
+
+1. **La fidélité des builds.** Deux sources de Riot indépendantes : les achats horodatés de la timeline (d'où vient l'ordre d'achat) et l'inventaire de fin de partie. Sur les 3 premiers objets terminés : **99,84 % retrouvés au 16.21, 99,79 % au 16.22** (36 571 objets, mesure du 06/11). Les objets qui se transforment (Manamune → Muramana…) comptent comme retrouvés, grâce à une seed de 3 lignes tirée du champ `specialRecipe` de Data Dragon ; sans elle, ~98 %. Un test avertit sous 99 % (à partir de 1 000 objets) et la mart nomme les objets les plus souvent absents : Manamune retiré exprès de la seed, l'alerte sonne et désigne « Manamune (450) ».
+2. **Le build populaire contre la meilleure alternative.** Pour chaque champion à son poste, au niveau de la famille et du chemin, le build le plus joué affronte la meilleure alternative jouée au moins 10 fois. Trois verdicts, avec les fourchettes de Wilson : **confirmé** (le bas de la fourchette du populaire dépasse le haut de toutes les autres), **pépite** (le bas d'une alternative dépasse le haut du populaire), **non départagé** (les fourchettes se chevauchent).
+3. **L'expérience naturelle du patch.** Quand Riot change un objet ou un kit, le moteur théorique prédit le sens (la valeur monte ou baisse) **le jour du patch, avant toute partie**. Le ladder dit ensuite si la part de jeu et les victoires ont suivi. C'est le juge le plus fort : il teste la cause (le changement de Riot), pas l'effet de troupeau. Les deux causes sont séparées : un champion dont le kit a changé est écarté des concernés d'un objet changé.
+
+**Ce que les premiers patches ont appris :**
+- **La plupart des duels ne sont pas encore départagés**, faute de parties. Au 16.22 (run du 06/11), 3 duels sur 117 seulement l'étaient (Jhin BOTTOM : critique 208 parties à 54 %, contre létalité 41 parties à 32 %).
+- **Les verdicts bougent beaucoup en début de patch.** Entre les runs du 07 et du 08/11, 3 « confirmés » sur 4 sont redevenus non départagés, et deux pépites se sont évaporées (Renata Glasc : 10 victoires sur 11, puis 12 sur 17 ; c'est le retour vers la moyenne). Règle recommandée, pas encore décidée : n'afficher un verdict aux joueurs que s'il tient au patch suivant.
+- **Le bulletin montre où la théorie est aveugle.** Au 16.22, le moteur prédisait une baisse de Mel ; le ladder montre une forte hausse, prouvée. La cause : Riot a baissé ses coûts en mana et ses temps de recharge, que la version A ne voit pas, et a restructuré les formules de son Q. Ce n'est pas un échec du bulletin, c'est son rôle.
+
+## Vers un simulateur de combat
+
+Additionner des stats ne suffit pas : un objet a des effets, et un champion n'a pas les mêmes stats au niveau 1 et au niveau 11. Le but fixé : un moteur qui propose un build à partir des stats des champions et des objets, **stats pures, effets et coût**. Le plan : simuler un combat contre un mannequin, comme dans l'outil d'entraînement, mais en calcul. Quatre étapes : les données ; un mannequin sans effets ; les effets des objets, **lus automatiquement** dans les textes de Riot (un catalogue écrit à la main vieillirait à chaque saison) ; puis des scénarios tirés du ladder et un build construit objet par objet. Le ladder sert de juge.
+
+**Étape 1, en cours : les stats de base de chaque champion.**
+- **La source** : la fiche du champion dans le fichier du jeu (CommunityDragon), déjà téléchargé pour les kits. Data Dragon, la source officielle, n'a pas le ratio de vitesse d'attaque (0 pour Jhin, dont la vitesse d'attaque ne grandit pas comme celle des autres), et **donne 0 d'AD par niveau à tous les champions depuis le 16.5**.
+- **Riot a renommé les champs au 16.5** (`baseHP` → `baseHPModifiable`, `baseSpellBlock` → `baseMR`…), et certains arrivent **hachés** (`{01262a25}`). Un nom haché est l'empreinte FNV-1a 32 bits du nom en minuscules : FNV-1a(`mrperlevel`) = `01262a25`, vérifié en calculant. CommunityDragon remplace l'empreinte par le nom quand il le trouve (au 16.16 pour celui-ci). Le 16.5 est aussi le patch où l'AD par niveau de Data Dragon tombe à 0 : son générateur cherchait probablement encore l'ancien nom.
+- **Le brut garde tout, sous le nom du fichier** (186 282 nombres, 22 patches). Une seed traduit chaque orthographe connue (45) vers 21 stats, et prévoit déjà le nom en clair des 4 empreintes pas encore décodées. Un nouveau renommage de Riot ne passera pas en silence : les tests de l'étape suivante échoueront sur une stat obligatoire manquante, ou sur une stat qui disparaît d'un patch à l'autre.
+- **Recoupé avec Data Dragon sur les 22 patches** (~60 000 comparaisons) : identique à 3 exceptions près, en début de saison, sauf l'AD par niveau.
+- **Un champ absent n'est pas toujours 0** : il prend la valeur par défaut du jeu. Mettre 0 partout aurait donné 0 régénération de PV à Zac (le jeu : 1 PV par seconde) et 0 de fureur maximale à Tryndamere (le jeu : 100), sans aucune erreur visible.
 
 ## Choix notables
 
@@ -111,11 +144,15 @@ Run du 03/11 après correction : **825 requêtes en 17 minutes** (contre plus de
 
 **Des objets fantômes.** Data Dragon marque 33 objets à identifiant à 6 chiffres (323003 pour le Bâton de l'archange 3003…) comme achetables sur la Faille. Ce sont des variantes d'autres modes : **0 achat sur 403 603** dans le ladder. Ils faisaient pourtant 21 % des lignes de la valeur théorique au 16.22, et occupaient 149 places dans des top 5 (le n° 1 théorique de Jinx en était un). Ils sont écartés, et un test refait la mesure à chaque build : si un vrai objet de la Faille recevait un jour un identifiant à 6 chiffres, il serait signalé au lieu d'être perdu.
 
-**Les familles de builds : une seed relue, un vote simple.** Les étiquettes officielles des objets sont imprécises (le Couperet noir est étiqueté comme un objet de létalité et d'on-hit), et la létalité n'apparaît pas dans les stats des fichiers du jeu. La famille de chaque objet est donc une **seed** : pré-remplie par des règles sur les étiquettes et les stats, puis **relue en entier par un joueur expérimenté**, qui a corrigé 17 cas douteux et montré qu'un objet peut avoir plusieurs familles (une principale, des secondaires). Un build est classé par la famille majoritaire de ses trois premiers objets terminés ; sans majorité, « hybride » s'il mélange AD et AP, sinon la famille du premier objet. Une famille devient un **choix** à partir de 10 parties ; le nombre de parties est toujours affiché, et les choix sont classés par le **bas de leur fourchette**, pour qu'un 80 % sur 10 parties ne passe pas devant un 54 % sur 500. Une règle d'« objet signature » a été essayée puis retirée : elle corrigeait un champion (Ezreal) mais en reclassait deux autres à tort (173 builds de Jayce et de Varus) — mesuré sur tous les builds réels, pas seulement sur le cas qui l'avait fait naître.
+**Les familles de builds : une seed relue, un vote simple.** Les étiquettes officielles des objets sont imprécises (le Couperet noir est étiqueté comme un objet de létalité et d'on-hit), et la létalité manquait alors aux stats chargées depuis les fichiers du jeu (un bug du chargeur, corrigé le 09/11 : voir plus bas). La famille de chaque objet est donc une **seed** : pré-remplie par des règles sur les étiquettes et les stats, puis **relue en entier par un joueur expérimenté**, qui a corrigé 17 cas douteux et montré qu'un objet peut avoir plusieurs familles (une principale, des secondaires). Un build est classé par la famille majoritaire de ses trois premiers objets terminés ; sans majorité, « hybride » s'il mélange AD et AP, sinon la famille du premier objet. Une famille devient un **choix** à partir de 10 parties ; le nombre de parties est toujours affiché, et les choix sont classés par le **bas de leur fourchette**, pour qu'un 80 % sur 10 parties ne passe pas devant un 54 % sur 500. Une règle d'« objet signature » a été essayée puis retirée : elle corrigeait un champion (Ezreal) mais en reclassait deux autres à tort (173 builds de Jayce et de Varus) — mesuré sur tous les builds réels, pas seulement sur le cas qui l'avait fait naître.
 
 **Une couche intermédiaire, pour écrire une règle une seule fois.** L'ordre d'achat des objets (achats annulés exclus) sert à deux marts : il vit dans un modèle intermédiaire partagé. Après ce déplacement, `mart_ladder_builds` a été comparé à sa version précédente : 5 533 lignes de chaque côté, **0 différence**.
 
-**Des tests qu'on a vus échouer.** Les nouveaux tests ont d'abord été lancés contre une version sabotée exprès (une famille retirée, une faute de frappe, une majorité à 3 objets au lieu de 2) : chacun a échoué là où il devait, puis est passé sur la version juste. Un test qu'on n'a jamais vu échouer ne prouve pas qu'il détecte le problème.
+**Des tests qu'on a vus échouer.** Les nouveaux tests ont d'abord été lancés contre une version sabotée exprès (une famille retirée, une faute de frappe, une majorité à 3 objets au lieu de 2) : chacun a échoué là où il devait, puis est passé sur la version juste. Un test qu'on n'a jamais vu échouer ne prouve pas qu'il détecte le problème. Un sabotage a même révélé un trou : pour le prix des stats, retirer le filtre « objet de base » laissait le test vert, parce que l'objet fabriqué du test était de toute façon plus cher. Le test a reçu un objet fabriqué moins cher, et le sabotage échoue maintenant.
+
+**Un recensement fait après le filtre.** Le chargeur des stats d'objets ne gardait que les champs dont le nom commence par « m » (`mFlatHPPoolMod`). Le mana, la régénération de mana, la létalité et l'omnivampirisme s'écrivent sans ce « m » : ils n'étaient **jamais chargés** (72, 61, 40 et 16 objets au 16.22). Le code annonçait « 24 sortes de stats recensées », mais le recensement avait été fait sur les données déjà filtrées : il ne pouvait pas voir ce que le filtre jetait. Le bug est apparu à la relecture d'un résultat (« Ahri commence par un objet qui donne du mana » : 0 objet avec du mana dans la base). Correction testée, puis toute la saison rechargée (sauvegarde, vidage, rechargement) et vérifiée par différence : **0 ancienne ligne perdue ou changée**, 4 097 lignes nouvelles, exactement les 5 sortes attendues ; mana identique à Data Dragon pour les 72 objets. Effet de bord : un nerf de létalité au 16.21 (Bastionbreaker, 22 → 18), invisible jusque-là, est maintenant vu par le bulletin.
+
+**Un chargement des kits table par table.** Un patch était « déjà chargé » s'il figurait dans une seule table, celle des formules. Une nouvelle table (la fiche des champions) serait restée vide pour les 22 patches déjà là. Chaque table complète maintenant ses propres patches manquants : la fiche de toute la saison s'est remplie au run suivant, sans lancement à la main, et les autres tables sont restées identiques à la ligne près. Au passage, un risque de double chargement après une panne en cours de patch a disparu.
 
 **Des tests sur les données, pas seulement sur le code.**
 - `SAFE_CAST` ne plante jamais : une valeur non convertible devient `NULL` en silence. Un test singulier vérifie qu'aucune valeur non vide n'est perdue à la conversion (0 sur 10 colonnes).
@@ -148,9 +185,11 @@ Volume par partie du ladder, mesuré sur le premier run réel : ~70 Ko dans BigQ
 
 **Le run quotidien, mesuré le 06/11/2026** : 800 parties (le plafond ; 844 disponibles), **2 602 requêtes à Riot, 0 refus 429, 0 panne**. La collecte dure 51 min 52 s, dont 2 300 s d'attente du limiteur sur la route `europe` : c'est le quota de la clé, pas le code, qui fixe la durée. Puis `dbt build` : 3 min 17 s, 129 nœuds, **127 PASS, 2 avertissements connus, 0 erreur**.
 
+**Les runs des 10 et 11/11** : 771 et 776 parties, 1 et 3 refus 429 ; `dbt build` **186 PASS, 2 avertissements connus, 0 erreur** (bulletin de patch et fiche des champions compris).
+
 ## Limites
 
-- **Airflow tourne en local** : la collecte n'a lieu que si le PC est allumé à 14 h 30 UTC. La fenêtre de 2 jours absorbe un jour manqué ; au-delà, des parties sont perdues.
+- **Airflow tourne en local** : la collecte n'a lieu que si le PC est allumé à 14 h 30 UTC. La fenêtre de 2 jours absorbe un jour manqué ; au-delà, des parties sont perdues. Airflow ne rejoue que le dernier jour manqué (`catchup=False`). Et au réveil du PC, le run en retard démarre avant que le réseau soit prêt (2 fois en novembre) : les relances automatiques le rattrapent, mais celle d'Oracle's Elixir n'a lieu qu'au bout de 2 heures.
 - **Un échantillon, pas tout le ladder.** La clé *personal* autorise 100 requêtes par 2 minutes : jusqu'à 800 nouvelles parties par jour (environ 52 minutes de collecte), à partir des 1 000 joueurs Challenger et Grandmaster. Les parties sont celles de joueurs du haut du classement, pas un tirage aléatoire.
 - **La diffusion de la meta est censurée à gauche.** La ladder n'est collectée que depuis le patch 16.21 ; aucun délai n'est mesurable tant qu'un champion n'est pas entré dans la meta pendant la fenêtre observée. Le pro, lui, saute des patches (aucun match au 16.19) : un délai en patches se lit avec ça en tête.
 - **Les seuils viennent d'un premier échantillon** (parties ≥ 15 min, objets ≥ 2 000 po) et seront revérifiés sur un patch complet. Aucun seuil de volume n'est encore imposé aux matchups : chaque taux est publié avec sa fourchette de confiance, qui dit elle-même quand un effectif est trop faible.
@@ -158,7 +197,9 @@ Volume par partie du ladder, mesuré sur le premier run réel : ~70 Ko dans BigQ
 - **Les plaques de tourelle** ne suivent pas la règle connue (jusqu'à 15 par équipe et par voie, jusqu'à la minute 36) : collectées, mais utilisées par aucune mart tant que la mécanique n'est pas vérifiée.
 - **Les données pro** dépendent d'Oracle's Elixir : certains matchs sont incomplets (écart d'or à 15 minutes manquant pour 1 740 lignes joueurs).
 - **Les formules des sorts viennent d'une source communautaire** (CommunityDragon), non officielle : à valider avant toute demande de clé de production. Une formule seulement renommée (contenu identique) est reconnue comme telle ; si Riot la renomme **et** en change la structure, elle reste signalée comme un retrait plus un ajout.
-- **La létalité n'est pas valorisée par le moteur théorique** : elle n'apparaît pas dans les stats des objets des fichiers du jeu (seulement sur d'anciens objets d'Arena). Les objets de létalité ne sont reconnus que par l'étiquette de Riot, pour les familles.
+- **La létalité n'a pas encore de prix** : elle est chargée depuis le 09/11, mais aucun objet de base ne donne que de la létalité, donc la règle du prix d'un point ne s'applique pas. Un prix dérivé est prévu. Même chose pour le vol de vie, la ténacité, les pénétrations, les soins et boucliers : non valorisés.
+- **Le moteur théorique ne voit ni les coûts en mana, ni les temps de recharge, ni les dégâts de base, ni les effets des objets** : c'est l'angle mort que le bulletin a révélé (Mel au 16.22), et que le simulateur doit combler.
+- **Les verdicts du bulletin sont instables en début de patch** : beaucoup de duels se renversent en un ou deux jours. Ils ne doivent pas être montrés aux joueurs avant d'avoir tenu dans la durée.
 - **La famille d'un objet ne dépend pas de qui l'achète.** La Force de la trinité est un objet de combattant : le build d'Ezreal (Trinité, Manamune, Faim insatiable) est donc classé « combattant », alors qu'un joueur dirait « Ezreal Manamune ». Choix assumé (la règle qui corrigeait ce cas en cassait d'autres).
 - **Peu de choix par champion pour l'instant** : au 16.22, après le run du 06/11, 42 couples champion × poste ont deux familles à 10 parties ou plus, et 2 en ont trois (Jax TOP : combattant, AP, hybride ; Sona support : enchanteur, tank, AP). La veille, 16 couples en avaient deux et aucun trois. Ce n'est pas l'algorithme mais le volume : il grandit chaque jour.
 - **Un poste peut manquer.** Riot laisse le poste vide quand il ne sait pas déduire le rôle d'un joueur (1 ligne sur 2 890 au 03/11, dans une partie finie à 15 min 32 s). Un test le signale en avertissement ; la mart des matchups écarte d'elle-même le duel concerné.
@@ -167,11 +208,13 @@ Volume par partie du ladder, mesuré sur le premier run réel : ~70 Ko dans BigQ
 
 ```
 ingestion/        Data Dragon, Oracle's Elixir, client Riot (limiteur), collecteur du ladder,
-                  kits des champions (formules des sorts, CommunityDragon)
+                  kits des champions (formules des sorts, fiche des stats) et stats
+                  des objets (CommunityDragon)
 infra/terraform/  bucket, datasets, compte de service, IAM minimal
 airflow/          image, docker-compose, DAG quotidien lol_daily
 dbt/              staging (vues) -> intermédiaire (vues) -> marts (tables), seeds
-                  relues (codes de stats, familles d'objets), tests de données
+                  relues (codes de stats, familles d'objets, objets transformés,
+                  noms des champs de la fiche), macros, tests de données
 tests/            pytest hors ligne : faux clients HTTP, BigQuery et Storage
 prototypes/       essais : LLM local (Ollama) qui appelle un outil sur un mart ;
                   pré-classement des familles d'objets avant relecture

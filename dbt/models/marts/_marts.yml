@@ -145,6 +145,175 @@ models:
           arguments:
             expression: "(is_choice AND choice_rank IS NOT NULL) OR (NOT is_choice AND choice_rank IS NULL)"
 
+  - name: mart_ladder_build_fidelity
+    description: >
+      Bulletin de patch, mesure 1 : la fidelite des builds. Une ligne par
+      patch. Les 3 premiers objets termines de chaque joueur (ceux des marts de
+      builds et de familles) sont compares a son inventaire de fin de partie,
+      une autre source de Riot. items_transformed = objets retrouves sous leur
+      forme transformee (Manamune -> Muramana, seed item_transformations).
+      fidelity_rate = (trouves + transformes) / controles. most_missing_items
+      = les 3 objets les plus souvent absents, pour diagnostiquer une alerte.
+      Mesure du 06/11/2026 : 99,84 % au 16.21, 99,79 % au 16.22.
+    columns:
+      - name: patch_key
+        data_tests: [unique, not_null]
+      - name: fidelity_rate
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "items_found + items_transformed + items_missing = items_checked"
+
+  - name: mart_ladder_build_duels
+    description: >
+      Bulletin de patch, mesure 2 : pour chaque champion a son poste, le build
+      le plus joue contre la meilleure alternative, au niveau de la famille
+      (critique, letalite...) et du chemin (deux premiers objets). Seules les
+      options jouees au moins build_family_min_games fois comptent ; un
+      champion a une seule option n'a pas de ligne. verdict compare les
+      fourchettes de Wilson : populaire_confirme (le bas du populaire depasse
+      le haut de toutes les alternatives), pepite (le bas de la challengeuse
+      depasse le haut du populaire), non_departage (chevauchement : pas assez
+      de parties pour trancher).
+    columns:
+      - name: level
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [famille, chemin]
+      - name: verdict
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [populaire_confirme, pepite, non_departage]
+      - name: options
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 2
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [patch_key, team_position, champion_id, level]
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "popular_games >= challenger_games"
+
+  - name: mart_patch_predictions
+    description: >
+      Bulletin de patch, mesure 3 (1/2) : ce que le moteur theorique predit a
+      chaque patch, avant toute partie. Une ligne par patch et par sujet qui
+      change : un objet modifie par Riot (stats ou prix), ou un champion dont
+      les ratios du kit ont change. predicted_direction = hausse ou baisse de
+      la valeur theorique (pour 1 000 pieces d'or) ; theory_change_pct = son
+      ecart moyen en %. Les deux causes sont separees : un champion dont le
+      kit a change est ecarte des concernes d'un objet change.
+      concerned_champion_ids = les champions pour qui l'objet change de valeur
+      (pour un champion : lui-meme).
+    columns:
+      - name: subject_type
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [objet, champion]
+      - name: predicted_direction
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [hausse, baisse]
+      - name: subject_name
+        data_tests: [not_null]
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [patch_key, subject_type, subject_id]
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "concerned_champions >= 1"
+
+  - name: mart_patch_experiments
+    description: >
+      Bulletin de patch, mesure 3 (2/2) : les predictions du moteur theorique
+      confrontees au ladder, ancien patch contre nouveau. Une ligne par
+      prediction testable (les deux patches ont des parties). share = part
+      des joueurs concernes qui achetent l'objet (3 premiers objets termines)
+      ou part des joueurs qui jouent le champion ; win_rate = taux de victoire
+      quand l'objet est achete, ou du champion. share_verdict et win_verdict
+      (macro patch_verdict) : confirme, meme_sens, sens_contraire, contredit,
+      stable, sans_donnees ; « confirme » et « contredit » exigent des
+      fourchettes de Wilson separees.
+    columns:
+      - name: share_verdict
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [confirme, meme_sens, sens_contraire, contredit, stable, sans_donnees]
+      - name: win_verdict
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [confirme, meme_sens, sens_contraire, contredit, stable, sans_donnees]
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [patch_key, subject_type, subject_id]
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "old_hits <= old_population AND new_hits <= new_population"
+
+  - name: mart_item_gold_value
+    description: >
+      Moteur theorique version B (dev seulement tant que le seed n'est pas
+      relu) : la valeur de chaque objet termine pour chaque champion, en or
+      utile. useful_gold_value = somme des stats x prix d'un point x utilite
+      de la stat pour le champion (classe principale, moitie de la classe
+      secondaire, ou part du ratio du kit). useful_gold_efficiency = valeur
+      utile / prix (1,00 = rentable comme ses composants de base).
+      gold_efficiency = la meme chose sans le filtre d'utilite.
+    columns:
+      - name: useful_gold_efficiency
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [patch_key, champion_id, item_id]
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "useful_gold_value <= gold_value"
+
+  - name: mart_patch_bulletin
+    description: >
+      Le bulletin de patch : une ligne par patch du ladder, qui resume les
+      trois mesures. Fidelite des builds (mart_ladder_build_fidelity) ; duels
+      populaire contre alternative, confirmes et pepites, par famille et par
+      chemin (mart_ladder_build_duels) ; experiences de patch : combien dans
+      le sens predit par le moteur theorique (confirme ou meme_sens), combien
+      prouvees, combien contredites (mart_patch_experiments, verdict sur la
+      part d'achat ou de jeu).
+    columns:
+      - name: patch_key
+        data_tests: [unique, not_null]
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "family_confirmed + family_gems <= family_duels AND path_confirmed + path_gems <= path_duels AND experiments_predicted_direction <= experiments"
+
   - name: mart_meta_diffusion
     description: >
       Grille patch x champion (tous les champions Data Dragon) : taux de pick en
@@ -466,3 +635,348 @@ unit_tests:
       rows:
         - {patch_key: 1622, champion_id: 799, item_id: 3071, theory_value: 76.5,
            theory_value_per_1000_gold: 25.5, rank_for_champion: 1}
+
+  # La fidelite des builds sur deux patches. Au 16.22, trois joueurs :
+  #   p1 : Infinity Edge, Collector, Lord Dominik (rangs 1 a 3), tous dans
+  #        l'inventaire final -> 3 trouves ;
+  #   p2 : Manamune (rang 1), Black Cleaver (rang 2) ; l'inventaire contient
+  #        Muramana -> Manamune compte comme transforme, Black Cleaver trouve ;
+  #   p3 : Manamune (rang 1), Black Cleaver (rang 2), Bloodthirster (rang 4) ;
+  #        ni Manamune ni Muramana dans l'inventaire (revendu) -> absent ;
+  #        Bloodthirster, absent lui aussi, n'est PAS controle (rang 4).
+  # 16.22 : 7 controles, 5 trouves, 1 transforme, 1 absent -> 6/7 = 0,8571.
+  # 16.21 : un joueur, Infinity Edge trouve -> 1/1.
+  - name: build_fidelity_counts_transformed_items_and_ignores_rank_four
+    model: mart_ladder_build_fidelity
+    given:
+      - input: ref('int_ladder__completed_purchases')
+        rows:
+          - {match_id: "M1", participant_id: 1, item_id: 3031, purchase_rank: 1}
+          - {match_id: "M1", participant_id: 1, item_id: 6676, purchase_rank: 2}
+          - {match_id: "M1", participant_id: 1, item_id: 3036, purchase_rank: 3}
+          - {match_id: "M1", participant_id: 2, item_id: 3004, purchase_rank: 1}
+          - {match_id: "M1", participant_id: 2, item_id: 3071, purchase_rank: 2}
+          - {match_id: "M1", participant_id: 3, item_id: 3004, purchase_rank: 1}
+          - {match_id: "M1", participant_id: 3, item_id: 3071, purchase_rank: 2}
+          - {match_id: "M1", participant_id: 3, item_id: 3072, purchase_rank: 4}
+          - {match_id: "M2", participant_id: 1, item_id: 3031, purchase_rank: 1}
+      - input: ref('stg_ladder__participants')
+        format: sql
+        rows: |
+          SELECT 'M1' AS match_id, 1 AS participant_id, 1622 AS patch_key,
+            [3031, 6676, 3036, 3006] AS item_ids
+          UNION ALL SELECT 'M1', 2, 1622, [3042, 3071]
+          UNION ALL SELECT 'M1', 3, 1622, [3071, 3047]
+          UNION ALL SELECT 'M2', 1, 1621, [3031]
+      - input: ref('item_transformations')
+        rows:
+          - {item_id: 3004, transformed_item_id: 3042}
+      - input: ref('stg_ddragon__items')
+        rows:
+          - {patch_key: 1622, item_id: 3004, item_name: Manamune}
+    expect:
+      rows:
+        - {patch_key: 1622, items_checked: 7, items_found: 5, items_transformed: 1,
+           items_missing: 1, fidelity_rate: 0.8571, most_missing_items: "Manamune (1)"}
+        - {patch_key: 1621, items_checked: 1, items_found: 1, items_transformed: 0,
+           items_missing: 0, fidelity_rate: 1.0, most_missing_items: null}
+
+  # Les duels « populaire contre meilleure alternative ». Les fourchettes sont
+  # donnees en entree (le mart les lit, il ne les calcule pas).
+  # Familles, 16.22 :
+  #   Jhin : critique 200 parties [0,47-0,61] contre letalite 40 [0,20-0,46]
+  #          -> le bas du populaire depasse le haut de l'autre : confirme ;
+  #   Varus : on-hit 100 [0,31-0,50] contre letalite 40 [0,60-0,86]
+  #          -> le bas de l'autre depasse le haut du populaire : pepite ;
+  #   Katarina : on-hit 50 [0,38-0,65] contre AP 20 [0,34-0,74] -> les
+  #          fourchettes se chevauchent : non departage. Son hybride 9/9
+  #          [0,70-1,00] serait une pepite, mais 9 parties < 10 : ecarte ;
+  #   Ahri : une seule famille -> pas de duel, pas de ligne.
+  # Chemins, 16.22 :
+  #   Kalista : Shiv > Guinsoo 128 [0,50-0,67] contre Shiv > Lame du roi
+  #          dechu 12 [0,25-0,75] -> non departage ; le chemin « Shiv » seul
+  #          (partie finie avant le 2e objet) n'est pas un build : ecarte.
+  - name: build_duels_confirmed_gem_undecided_and_thresholds
+    model: mart_ladder_build_duels
+    given:
+      - input: ref('mart_ladder_build_families')
+        rows:
+          - {patch_key: 1622, team_position: BOTTOM, champion_id: 202, build_family: critique, games: 200, win_rate: 0.54, win_rate_low: 0.47, win_rate_high: 0.61}
+          - {patch_key: 1622, team_position: BOTTOM, champion_id: 202, build_family: letalite, games: 40, win_rate: 0.32, win_rate_low: 0.20, win_rate_high: 0.46}
+          - {patch_key: 1622, team_position: BOTTOM, champion_id: 110, build_family: on_hit, games: 100, win_rate: 0.40, win_rate_low: 0.31, win_rate_high: 0.50}
+          - {patch_key: 1622, team_position: BOTTOM, champion_id: 110, build_family: letalite, games: 40, win_rate: 0.75, win_rate_low: 0.60, win_rate_high: 0.86}
+          - {patch_key: 1622, team_position: MIDDLE, champion_id: 55, build_family: on_hit, games: 50, win_rate: 0.52, win_rate_low: 0.38, win_rate_high: 0.65}
+          - {patch_key: 1622, team_position: MIDDLE, champion_id: 55, build_family: ap, games: 20, win_rate: 0.55, win_rate_low: 0.34, win_rate_high: 0.74}
+          - {patch_key: 1622, team_position: MIDDLE, champion_id: 55, build_family: hybride, games: 9, win_rate: 1.0, win_rate_low: 0.70, win_rate_high: 1.0}
+          - {patch_key: 1622, team_position: MIDDLE, champion_id: 103, build_family: ap, games: 150, win_rate: 0.52, win_rate_low: 0.44, win_rate_high: 0.60}
+      - input: ref('mart_ladder_builds')
+        rows:
+          - {patch_key: 1622, team_position: BOTTOM, champion_id: 429, first_item_name: "Statikk Shiv", second_item_id: 3124, second_item_name: "Guinsoo's Rageblade", games: 128, win_rate: 0.59, win_rate_low: 0.50, win_rate_high: 0.67}
+          - {patch_key: 1622, team_position: BOTTOM, champion_id: 429, first_item_name: "Statikk Shiv", second_item_id: 3153, second_item_name: "Blade of The Ruined King", games: 12, win_rate: 0.50, win_rate_low: 0.25, win_rate_high: 0.75}
+          - {patch_key: 1622, team_position: BOTTOM, champion_id: 429, first_item_name: "Statikk Shiv", second_item_id: null, second_item_name: null, games: 30, win_rate: 0.20, win_rate_low: 0.10, win_rate_high: 0.37}
+      - input: ref('stg_ddragon__champions')
+        rows:
+          - {patch_key: 1622, champion_id: 202, champion_name: Jhin}
+          - {patch_key: 1622, champion_id: 110, champion_name: Varus}
+          - {patch_key: 1622, champion_id: 55, champion_name: Katarina}
+          - {patch_key: 1622, champion_id: 103, champion_name: Ahri}
+          - {patch_key: 1622, champion_id: 429, champion_name: Kalista}
+    expect:
+      rows:
+        - {champion_name: Jhin, level: famille, options: 2, popular_option: critique,
+           challenger_option: letalite, verdict: populaire_confirme}
+        - {champion_name: Varus, level: famille, options: 2, popular_option: on_hit,
+           challenger_option: letalite, verdict: pepite}
+        - {champion_name: Katarina, level: famille, options: 2, popular_option: on_hit,
+           challenger_option: ap, verdict: non_departage}
+        - {champion_name: Kalista, level: chemin, options: 2,
+           popular_option: "Statikk Shiv > Guinsoo's Rageblade",
+           challenger_option: "Statikk Shiv > Blade of The Ruined King", verdict: non_departage}
+
+  # Les predictions du moteur theorique entre 16.21 et 16.22, deux causes
+  # separees :
+  #   - objet change par Riot : Bloodmail 2501 (AD 30 -> 40) ; pour Aatrox
+  #     (266) sa valeur passe de 10 a 13 (+30 %) -> hausse. Ahri (103) n'a pas
+  #     d'ecart (pas de ratio d'AD) : pas concernee. Yasuo (157) a aussi un
+  #     ecart sur Bloodmail, mais son kit a change : la cause est melangee, il
+  #     est ecarte des concernes. Collector 6676 change de prix seulement
+  #     (3000 -> 3100) : 9 -> 8,7 pour Aatrox (-3,3 %) -> baisse ;
+  #   - kit change : Aurelion Sol (136), objets inchanges +10 % -> hausse ;
+  #     Yasuo, Infinity Edge inchangee 10 -> 9 (-10 %) -> baisse.
+  #   - Aatrox n'a pas d'ecart sur un objet inchange (3071) : pas de
+  #     prediction de kit pour lui.
+  - name: patch_predictions_separate_item_and_kit_changes
+    model: mart_patch_predictions
+    given:
+      - input: ref('mart_item_theory_value')
+        rows:
+          - {patch_key: 1621, champion_id: 266, item_id: 2501, theory_value_per_1000_gold: 10.0}
+          - {patch_key: 1622, champion_id: 266, item_id: 2501, theory_value_per_1000_gold: 13.0}
+          - {patch_key: 1621, champion_id: 266, item_id: 6676, theory_value_per_1000_gold: 9.0}
+          - {patch_key: 1622, champion_id: 266, item_id: 6676, theory_value_per_1000_gold: 8.7}
+          - {patch_key: 1621, champion_id: 266, item_id: 3071, theory_value_per_1000_gold: 8.0}
+          - {patch_key: 1622, champion_id: 266, item_id: 3071, theory_value_per_1000_gold: 8.0}
+          - {patch_key: 1621, champion_id: 103, item_id: 2501, theory_value_per_1000_gold: 5.0}
+          - {patch_key: 1622, champion_id: 103, item_id: 2501, theory_value_per_1000_gold: 5.0}
+          - {patch_key: 1621, champion_id: 157, item_id: 2501, theory_value_per_1000_gold: 10.0}
+          - {patch_key: 1622, champion_id: 157, item_id: 2501, theory_value_per_1000_gold: 13.0}
+          - {patch_key: 1621, champion_id: 157, item_id: 3031, theory_value_per_1000_gold: 10.0}
+          - {patch_key: 1622, champion_id: 157, item_id: 3031, theory_value_per_1000_gold: 9.0}
+          - {patch_key: 1621, champion_id: 136, item_id: 3089, theory_value_per_1000_gold: 20.0}
+          - {patch_key: 1622, champion_id: 136, item_id: 3089, theory_value_per_1000_gold: 22.0}
+          - {patch_key: 1621, champion_id: 136, item_id: 3157, theory_value_per_1000_gold: 10.0}
+          - {patch_key: 1622, champion_id: 136, item_id: 3157, theory_value_per_1000_gold: 11.0}
+      - input: ref('stg_item_stats')
+        rows:
+          - {patch_key: 1621, item_id: 2501, stat: FlatPhysicalDamageMod, value: 30.0}
+          - {patch_key: 1622, item_id: 2501, stat: FlatPhysicalDamageMod, value: 40.0}
+          - {patch_key: 1621, item_id: 6676, stat: FlatPhysicalDamageMod, value: 50.0}
+          - {patch_key: 1622, item_id: 6676, stat: FlatPhysicalDamageMod, value: 50.0}
+          - {patch_key: 1621, item_id: 3031, stat: FlatPhysicalDamageMod, value: 65.0}
+          - {patch_key: 1622, item_id: 3031, stat: FlatPhysicalDamageMod, value: 65.0}
+      - input: ref('stg_ddragon__items')
+        rows:
+          - {patch_key: 1621, item_id: 2501, item_name: "Overlord's Bloodmail", gold_total: 3300, is_completed: true}
+          - {patch_key: 1622, item_id: 2501, item_name: "Overlord's Bloodmail", gold_total: 3300, is_completed: true}
+          - {patch_key: 1621, item_id: 6676, item_name: "The Collector", gold_total: 3000, is_completed: true}
+          - {patch_key: 1622, item_id: 6676, item_name: "The Collector", gold_total: 3100, is_completed: true}
+          - {patch_key: 1621, item_id: 3031, item_name: "Infinity Edge", gold_total: 3450, is_completed: true}
+          - {patch_key: 1622, item_id: 3031, item_name: "Infinity Edge", gold_total: 3450, is_completed: true}
+      - input: ref('stg_ddragon__champions')
+        rows:
+          - {patch_key: 1622, champion_id: 136, champion_name: "Aurelion Sol"}
+          - {patch_key: 1622, champion_id: 157, champion_name: Yasuo}
+    expect:
+      rows:
+        - {patch_key: 1622, previous_patch_key: 1621, subject_type: objet, subject_id: 2501,
+           subject_name: "Overlord's Bloodmail", predicted_direction: hausse,
+           theory_change_pct: 30.0, concerned_champions: 1}
+        - {patch_key: 1622, previous_patch_key: 1621, subject_type: objet, subject_id: 6676,
+           subject_name: "The Collector", predicted_direction: baisse,
+           theory_change_pct: -3.3, concerned_champions: 1}
+        - {patch_key: 1622, previous_patch_key: 1621, subject_type: champion, subject_id: 136,
+           subject_name: "Aurelion Sol", predicted_direction: hausse,
+           theory_change_pct: 10.0, concerned_champions: 1}
+        - {patch_key: 1622, previous_patch_key: 1621, subject_type: champion, subject_id: 157,
+           subject_name: Yasuo, predicted_direction: baisse,
+           theory_change_pct: -10.0, concerned_champions: 1}
+
+  # Les experiences de patch, 16.21 -> 16.22. Deux predictions testables et
+  # une sans donnees de ladder :
+  #   - objet Bloodmail (hausse), concerne : Aatrox (266). Au 16.21, 10
+  #     joueurs d'Aatrox, aucun ne l'achete dans ses 3 premiers objets (un
+  #     l'achete en 4e : ne compte pas). Au 16.22, 10 joueurs, tous l'achetent
+  #     en 1er, 6 gagnent. Part 0/10 [0 ; 0,28] -> 10/10 [0,72 ; 1] :
+  #     confirme. Victoires quand achete : aucun acheteur au 16.21 ->
+  #     sans_donnees ;
+  #   - champion Aurelion Sol (hausse) : joue 2 fois sur 12 joueurs au 16.21
+  #     (1 victoire), 1 fois sur 11 au 16.22 (1 victoire). Part en baisse,
+  #     fourchettes qui se chevauchent -> sens_contraire ; victoires 1/2 ->
+  #     1/1, en hausse sans preuve -> meme_sens ;
+  #   - champion 999 au 16.01 : pas de ladder -> pas de ligne.
+  - name: patch_experiments_verdicts_against_the_ladder
+    model: mart_patch_experiments
+    given:
+      - input: ref('mart_patch_predictions')
+        format: sql
+        rows: |
+          SELECT 1622 AS patch_key, 1621 AS previous_patch_key, 'objet' AS subject_type,
+            2501 AS subject_id, "Overlord's Bloodmail" AS subject_name,
+            'hausse' AS predicted_direction, 30.0 AS theory_change_pct,
+            1 AS concerned_champions, [266] AS concerned_champion_ids
+          UNION ALL SELECT 1622, 1621, 'champion', 136, 'Aurelion Sol', 'hausse', 2.3, 1, [136]
+          UNION ALL SELECT 1601, 1524, 'champion', 999, 'Inconnu', 'baisse', -5.0, 1, [999]
+      - input: ref('stg_ladder__participants')
+        format: sql
+        rows: |
+          SELECT CONCAT('A21_', CAST(n AS STRING)) AS match_id, 1 AS participant_id,
+            1621 AS patch_key, 266 AS champion_id, n <= 5 AS is_win
+          FROM UNNEST(GENERATE_ARRAY(1, 10)) AS n
+          UNION ALL
+          SELECT CONCAT('A22_', CAST(n AS STRING)), 1, 1622, 266, n <= 6
+          FROM UNNEST(GENERATE_ARRAY(1, 10)) AS n
+          UNION ALL SELECT 'S21_1', 2, 1621, 136, TRUE
+          UNION ALL SELECT 'S21_2', 2, 1621, 136, FALSE
+          UNION ALL SELECT 'S22_1', 2, 1622, 136, TRUE
+      - input: ref('int_ladder__completed_purchases')
+        format: sql
+        rows: |
+          SELECT CONCAT('A22_', CAST(n AS STRING)) AS match_id, 1 AS participant_id,
+            2501 AS item_id, 1 AS purchase_rank
+          FROM UNNEST(GENERATE_ARRAY(1, 10)) AS n
+          UNION ALL SELECT 'A21_1', 1, 2501, 4
+    expect:
+      rows:
+        - {subject_type: objet, subject_id: 2501, old_population: 10, old_hits: 0,
+           new_population: 10, new_hits: 10, new_hit_wins: 6,
+           share_verdict: confirme, win_verdict: sans_donnees}
+        - {subject_type: champion, subject_id: 136, old_population: 12, old_hits: 2,
+           new_population: 11, new_hits: 1, new_hit_wins: 1,
+           share_verdict: sens_contraire, win_verdict: meme_sens}
+
+  # Le bulletin resume les trois mesures, une ligne par patch. Au 16.22 :
+  # fidelite 99,79 % ; duels : 2 familles (1 confirme), 1 chemin (1 pepite) ;
+  # experiences : 3, dont 2 dans le sens predit (confirme + meme_sens), 1
+  # confirmee, 1 contredite. Au 16.21 : fidelite seule, le reste a 0.
+  - name: patch_bulletin_sums_the_three_measures
+    model: mart_patch_bulletin
+    given:
+      - input: ref('mart_ladder_build_fidelity')
+        rows:
+          - {patch_key: 1621, items_checked: 24830, fidelity_rate: 0.9984}
+          - {patch_key: 1622, items_checked: 36571, fidelity_rate: 0.9979}
+      - input: ref('mart_ladder_build_duels')
+        rows:
+          - {patch_key: 1622, level: famille, verdict: populaire_confirme}
+          - {patch_key: 1622, level: famille, verdict: non_departage}
+          - {patch_key: 1622, level: chemin, verdict: pepite}
+      - input: ref('mart_patch_experiments')
+        rows:
+          - {patch_key: 1622, share_verdict: confirme}
+          - {patch_key: 1622, share_verdict: meme_sens}
+          - {patch_key: 1622, share_verdict: contredit}
+    expect:
+      rows:
+        - {patch_key: 1621, fidelity_rate: 0.9984, family_duels: 0, family_confirmed: 0,
+           family_gems: 0, path_duels: 0, path_confirmed: 0, path_gems: 0,
+           experiments: 0, experiments_predicted_direction: 0,
+           experiments_confirmed: 0, experiments_contradicted: 0}
+        - {patch_key: 1622, fidelity_rate: 0.9979, family_duels: 2, family_confirmed: 1,
+           family_gems: 0, path_duels: 1, path_confirmed: 0, path_gems: 1,
+           experiments: 3, experiments_predicted_direction: 2,
+           experiments_confirmed: 1, experiments_contradicted: 1}
+
+  # Version B du moteur theorique, calculee a la main. Prix des stats : AD 35,
+  # PV 2,5, armure 20, AP 20, critique 4 000 (pour 100 %).
+  # Utilite = la plus haute de : la classe principale ; la moitie de la classe
+  # secondaire ; la part du ratio (ratio de la stat / plus gros ratio).
+  #   Ambessa (Fighter, Assassin ; ratio AD 5,0) : AD max(0,5 ; 0 ; 1) = 1,
+  #     PV 1, armure 0,5, critique 0, AP 0.
+  #       Sterak  : 40 AD x 35 + 400 PV x 2,5 = 2 400 / 3 200 = 0,75   -> 1er
+  #       IE      : 65 AD x 35 = 2 275 (critique inutile) / 3 450 = 0,6594
+  #       Thorn   : 350 PV x 2,5 + 70 armure x 20 x 0,5 = 1 575 / 2 450 = 0,6429
+  #       Rabadon : 0
+  #   Usage des ratios (ligne KitRatios) : Fighter 1, Assassin 1, Tank 0,5,
+  #     Mage 1 (en secondaire : 0,5).
+  #   Malphite (Tank, Mage ; ratios AP 2,6, armure 0,55, PV 0,1) : usage des
+  #     ratios max(0,5 ; 0,5 x 1) = 0,5 -> AP 1 x 0,5 = 0,5 ; armure 1, PV 1
+  #     (classe Tank), AD 0, critique 0.
+  #       Thorn   : 875 + 1 400 = 2 275 / 2 450 = 0,9286 -> 1er
+  #       Rabadon : 130 AP x 20 x 0,5 = 1 300 / 3 600 = 0,3611
+  #       Sterak  : 1 000 / 3 200 = 0,3125 ; IE : 0
+  # Rentabilite brute (toutes stats, sans utilite) de l'IE : (2 275 + 1 000)
+  # / 3 450 = 0,9493.
+  # Au 16.21 (a part, pour ne pas toucher aux rangs du 16.22) : Ezreal
+  # (Marksman, Mage), sans ratio, et un objet fictif d'acceleration (50 x 50 =
+  # 2 500 / 2 500). Acceleration : Marksman 0,5 ; Mage 1 mais classe
+  # secondaire -> 0,5 x 1 = 0,5. Utilite 0,5 -> rentabilite 0,5 (1,0 si la
+  # classe secondaire comptait en entier).
+  - name: item_gold_value_useful_stats_by_class_and_ratios
+    model: mart_item_gold_value
+    given:
+      - input: ref('stg_ddragon__champions')
+        format: sql
+        rows: |
+          SELECT 1622 AS patch_key, 799 AS champion_id, 'Ambessa' AS champion_code,
+            'Ambessa' AS champion_name, ['Fighter', 'Assassin'] AS tags
+          UNION ALL SELECT 1622, 54, 'Malphite', 'Malphite', ['Tank', 'Mage']
+          UNION ALL SELECT 1621, 81, 'Ezreal', 'Ezreal', ['Marksman', 'Mage']
+      - input: ref('mart_champion_stat_profile')
+        rows:
+          - {patch_key: 1622, champion_id: 799, item_stat: FlatPhysicalDamageMod, total_coefficient: 5.0}
+          - {patch_key: 1622, champion_id: 54, item_stat: FlatMagicDamageMod, total_coefficient: 2.6}
+          - {patch_key: 1622, champion_id: 54, item_stat: FlatArmorMod, total_coefficient: 0.55}
+          - {patch_key: 1622, champion_id: 54, item_stat: FlatHPPoolMod, total_coefficient: 0.1}
+      - input: ref('stat_usefulness_by_class')
+        rows:
+          - {champion_class: Fighter, stat: FlatPhysicalDamageMod, usefulness: 0.5}
+          - {champion_class: Fighter, stat: FlatHPPoolMod, usefulness: 1.0}
+          - {champion_class: Fighter, stat: FlatArmorMod, usefulness: 0.5}
+          - {champion_class: Fighter, stat: FlatCritChanceMod, usefulness: 0.0}
+          - {champion_class: Assassin, stat: FlatHPPoolMod, usefulness: 0.0}
+          - {champion_class: Tank, stat: FlatHPPoolMod, usefulness: 1.0}
+          - {champion_class: Tank, stat: FlatArmorMod, usefulness: 1.0}
+          - {champion_class: Tank, stat: FlatMagicDamageMod, usefulness: 0.0}
+          - {champion_class: Mage, stat: FlatHPPoolMod, usefulness: 0.5}
+          - {champion_class: Marksman, stat: AbilityHasteMod, usefulness: 0.5}
+          - {champion_class: Mage, stat: AbilityHasteMod, usefulness: 1.0}
+          - {champion_class: Fighter, stat: KitRatios, usefulness: 1.0}
+          - {champion_class: Assassin, stat: KitRatios, usefulness: 1.0}
+          - {champion_class: Tank, stat: KitRatios, usefulness: 0.5}
+          - {champion_class: Mage, stat: KitRatios, usefulness: 1.0}
+      - input: ref('int_items__stat_gold_price')
+        rows:
+          - {patch_key: 1622, stat: FlatPhysicalDamageMod, gold_per_unit: 35.0}
+          - {patch_key: 1622, stat: FlatHPPoolMod, gold_per_unit: 2.5}
+          - {patch_key: 1622, stat: FlatArmorMod, gold_per_unit: 20.0}
+          - {patch_key: 1622, stat: FlatMagicDamageMod, gold_per_unit: 20.0}
+          - {patch_key: 1622, stat: FlatCritChanceMod, gold_per_unit: 4000.0}
+          - {patch_key: 1621, stat: AbilityHasteMod, gold_per_unit: 50.0}
+      - input: ref('stg_ddragon__items')
+        rows:
+          - {patch_key: 1622, item_id: 3053, item_name: "Sterak's Gage", gold_total: 3200, is_completed: true}
+          - {patch_key: 1622, item_id: 3031, item_name: "Infinity Edge", gold_total: 3450, is_completed: true}
+          - {patch_key: 1622, item_id: 3075, item_name: "Thornmail", gold_total: 2450, is_completed: true}
+          - {patch_key: 1622, item_id: 3089, item_name: "Rabadon's Deathcap", gold_total: 3600, is_completed: true}
+          - {patch_key: 1621, item_id: 9100, item_name: "Objet d'acceleration (fictif)", gold_total: 2500, is_completed: true}
+      - input: ref('stg_item_stats')
+        rows:
+          - {patch_key: 1622, item_id: 3053, stat: FlatPhysicalDamageMod, value: 40.0}
+          - {patch_key: 1622, item_id: 3053, stat: FlatHPPoolMod, value: 400.0}
+          - {patch_key: 1622, item_id: 3031, stat: FlatPhysicalDamageMod, value: 65.0}
+          - {patch_key: 1622, item_id: 3031, stat: FlatCritChanceMod, value: 0.25}
+          - {patch_key: 1622, item_id: 3075, stat: FlatHPPoolMod, value: 350.0}
+          - {patch_key: 1622, item_id: 3075, stat: FlatArmorMod, value: 70.0}
+          - {patch_key: 1622, item_id: 3089, stat: FlatMagicDamageMod, value: 130.0}
+          - {patch_key: 1621, item_id: 9100, stat: AbilityHasteMod, value: 50.0}
+    expect:
+      rows:
+        - {champion_id: 799, item_id: 3053, useful_gold_efficiency: 0.75, rank_for_champion: 1}
+        - {champion_id: 799, item_id: 3031, useful_gold_efficiency: 0.6594, rank_for_champion: 2}
+        - {champion_id: 799, item_id: 3075, useful_gold_efficiency: 0.6429, rank_for_champion: 3}
+        - {champion_id: 799, item_id: 3089, useful_gold_efficiency: 0.0, rank_for_champion: 4}
+        - {champion_id: 54, item_id: 3075, useful_gold_efficiency: 0.9286, rank_for_champion: 1}
+        - {champion_id: 54, item_id: 3089, useful_gold_efficiency: 0.3611, rank_for_champion: 2}
+        - {champion_id: 54, item_id: 3053, useful_gold_efficiency: 0.3125, rank_for_champion: 3}
+        - {champion_id: 54, item_id: 3031, useful_gold_efficiency: 0.0, rank_for_champion: 4}
+        - {champion_id: 81, item_id: 9100, useful_gold_efficiency: 0.5, rank_for_champion: 1}

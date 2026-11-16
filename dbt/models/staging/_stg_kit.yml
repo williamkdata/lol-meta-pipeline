@@ -55,3 +55,47 @@ models:
       - dbt_utils.unique_combination_of_columns:
           arguments:
             combination_of_columns: [patch_key, item_id, stat]
+
+  - name: stg_kit__champion_record
+    description: >
+      La fiche du champion (fichier du jeu) : une stat par patch, champion et
+      stat, sous un nom stable (seed champion_record_fields). source_field garde
+      le nom lu dans le fichier. Unites du fichier du jeu : regenerations PAR
+      SECONDE (Data Dragon : par 5 secondes) ; as_per_level en pourcentage
+      (2.5 = +2,5 % par niveau) ; as_ratio = la vitesse d'attaque qui sert de
+      base aux bonus (en general egale a as_base).
+    data_tests:
+      # Jamais deux orthographes d'un meme champ en meme temps pour un champion :
+      # sinon, laquelle croire ? (0 cas sur 22 patches, mesure du 09/11/2026.)
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [patch_key, champion_id, stat]
+
+unit_tests:
+  # Le meme chiffre sous trois orthographes (ancien nom, nouveau nom, nom
+  # hache) devient la meme stat. Un champ hors de la seed (selectionHeight :
+  # la hauteur de la zone cliquable) est ignore ; l'entree speciale Jade_ du
+  # 16.15 est ecartee. Valeurs reelles d'Ahri.
+  - name: champion_record_translates_every_known_spelling
+    model: stg_kit__champion_record
+    given:
+      - input: source('lol_raw', 'kit_champion_record')
+        rows:
+          - {patch: '16.4', champion_id: 103, champion_code: Ahri, field: baseHP, value: 590.0}
+          - {patch: '16.22', champion_id: 103, champion_code: Ahri, field: baseHPModifiable, value: 590.0}
+          - {patch: '16.10', champion_id: 103, champion_code: Ahri, field: '{01262a25}', value: 2.05}
+          - {patch: '16.22', champion_id: 103, champion_code: Ahri, field: 'primaryAbilityResource.{726ee5cd}', value: 418.0}
+          - {patch: '16.22', champion_id: 103, champion_code: Ahri, field: selectionHeight, value: 180.0}
+          - {patch: '16.15', champion_id: 60103, champion_code: Jade_Ahri, field: baseHPModifiable, value: 590.0}
+      - input: ref('champion_record_fields')
+        rows:
+          - {field: baseHP, stat: hp_base, statut: observe, note: '16.1-16.4'}
+          - {field: baseHPModifiable, stat: hp_base, statut: observe, note: '16.5-16.22'}
+          - {field: '{01262a25}', stat: mr_per_level, statut: observe, note: '16.5-16.15'}
+          - {field: 'primaryAbilityResource.{726ee5cd}', stat: resource_base, statut: observe, note: '16.5-16.22'}
+    expect:
+      rows:
+        - {patch_key: 1604, champion_id: 103, stat: hp_base, value: 590.0, source_field: baseHP}
+        - {patch_key: 1622, champion_id: 103, stat: hp_base, value: 590.0, source_field: baseHPModifiable}
+        - {patch_key: 1610, champion_id: 103, stat: mr_per_level, value: 2.05, source_field: '{01262a25}'}
+        - {patch_key: 1622, champion_id: 103, stat: resource_base, value: 418.0, source_field: 'primaryAbilityResource.{726ee5cd}'}

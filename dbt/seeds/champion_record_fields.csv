@@ -1,0 +1,46 @@
+field,stat,statut,note
+baseHP,hp_base,observe,16.1-16.4
+baseHPModifiable,hp_base,observe,16.5-16.22
+hpPerLevel,hp_per_level,observe,16.1-16.4
+hpPerLevelModifiable,hp_per_level,observe,16.5-16.22
+baseStaticHPRegen,hp_regen_base,observe,16.1-16.4
+baseStaticHPRegenModifiable,hp_regen_base,observe,16.5-16.22
+hpRegenPerLevel,hp_regen_per_level,observe,16.1-16.4
+hpRegenPerLevelModifiable,hp_regen_per_level,observe,16.5-16.22
+baseArmor,armor_base,observe,16.1-16.4
+baseArmorModifiable,armor_base,observe,16.5-16.22
+armorPerLevel,armor_per_level,observe,16.1-16.4
+armorPerLevelModifiable,armor_per_level,observe,16.5-16.22
+baseSpellBlock,mr_base,observe,16.1-16.4
+baseMR,mr_base,observe,16.5-16.22
+spellBlockPerLevel,mr_per_level,observe,16.1-16.4
+{01262a25},mr_per_level,observe,16.5-16.15 ; empreinte FNV-1a de mrPerLevel
+mrPerLevel,mr_per_level,observe,16.16-16.22
+baseDamage,ad_base,observe,16.1-16.4
+baseDamageModifiable,ad_base,observe,16.5-16.22
+damagePerLevel,ad_per_level,observe,16.1-16.4
+damagePerLevelModifiable,ad_per_level,observe,16.5-16.22
+attackSpeed,as_base,observe,16.1-16.4
+attackSpeedModifiable,as_base,observe,16.5-16.22
+attackSpeedPerLevel,as_per_level,observe,16.1-16.4
+attackSpeedPerLevelModifiable,as_per_level,observe,16.5-16.22
+attackSpeedRatio,as_ratio,observe,16.1-16.4
+attackSpeedRatioModifiable,as_ratio,observe,16.5-16.22
+attackRange,attack_range,observe,16.1-16.4
+attackRangeModifiable,attack_range,observe,16.5-16.22
+baseMoveSpeed,move_speed,observe,16.1-16.4
+baseMoveSpeedModifiable,move_speed,observe,16.5-16.22
+critDamageMultiplier,crit_damage,observe,16.1-16.22
+primaryAbilityResource.arBase,resource_base,observe,16.1-16.4
+primaryAbilityResource.{726ee5cd},resource_base,observe,16.5-16.22 ; empreinte FNV-1a de arBaseModifiable
+primaryAbilityResource.arBaseModifiable,resource_base,prevu,nom en clair de {726ee5cd}
+primaryAbilityResource.arPerLevel,resource_per_level,observe,16.1-16.4
+primaryAbilityResource.{6216bf7b},resource_per_level,observe,16.5-16.22 ; empreinte FNV-1a de arPerLevelModifiable
+primaryAbilityResource.arPerLevelModifiable,resource_per_level,prevu,nom en clair de {6216bf7b}
+primaryAbilityResource.arBaseStaticRegen,resource_regen_base,observe,16.1-16.4
+primaryAbilityResource.{c4ab3550},resource_regen_base,observe,16.5-16.22 ; empreinte FNV-1a de arBaseStaticRegenModifiable
+primaryAbilityResource.arBaseStaticRegenModifiable,resource_regen_base,prevu,nom en clair de {c4ab3550}
+primaryAbilityResource.arRegenPerLevel,resource_regen_per_level,observe,16.1-16.4
+primaryAbilityResource.{3a509002},resource_regen_per_level,observe,16.5-16.22 ; empreinte FNV-1a de arRegenPerLevelModifiable
+primaryAbilityResource.arRegenPerLevelModifiable,resource_regen_per_level,prevu,nom en clair de {3a509002}
+primaryAbilityResource.arType,resource_type_code,observe,16.1-16.22

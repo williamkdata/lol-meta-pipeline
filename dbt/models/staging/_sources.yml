@@ -58,6 +58,14 @@ sources:
           Les valeurs par rang des sorts (rangs 1 a 6). Le Q de Rek'Sai contient
           deux fois BuffDuration dans le fichier du jeu.
 
+      - name: kit_champion_record
+        description: >
+          La fiche du champion (stats de base, gain par niveau, ressource...) :
+          un nombre par ligne, sous le nom du champ dans le fichier du jeu, sans
+          rien renommer. Les noms changent selon le patch (renommages de Riot
+          au 16.5, noms haches) : la traduction se fait en staging, avec la
+          seed champion_record_fields. Contient les 60 entrees Jade_ du 16.15.
+
   - name: lol_raw_ladder
     description: >
       Ladder EUW (Challenger + Grandmaster, classee solo), charge chaque jour par

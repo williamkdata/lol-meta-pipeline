@@ -25,9 +25,15 @@ ITEM_STATS_SCHEMA = [
     bigquery.SchemaField("stat", "STRING", mode="REQUIRED"),
     bigquery.SchemaField("value", "FLOAT"),
 ]
-# Les 24 sortes de stats recensees au 16.22 ont toutes un de ces mots dans leur
-# nom (mFlatHPPoolMod, mAbilityHasteMod, mFlatMagicPenetrationMod...).
-MOTS_DE_STAT = ("Mod", "Lethality", "Penetration", "Haste")
+# Recensement fait le 09/11/2026 sur le fichier BRUT du 16.22 (tous les champs
+# numeriques des objets, pas seulement ceux qui passaient l'ancien filtre) :
+# 29 sortes de stats. 24 s'ecrivent avec un "m" au debut (mFlatHPPoolMod), 5
+# SANS (flatMPPoolMod : le mana ; percentBaseMPRegenMod, flatMPRegenMod : la
+# regeneration de mana ; PhysicalLethality : la letalite ; PercentOmnivampMod).
+# L'ancien filtre exigeait le "m" : ces 5 n'etaient jamais chargees.
+# Regle : le nom finit par "Mod", ou c'est la letalite. Les autres nombres
+# (price, epicness, mRequiredLevel, specialRecipe...) ne sont pas des stats ;
+# sellBackModifier contient "Mod" mais finit par "Modifier".
 
 
 def item_stats_url(patch: str) -> str:
@@ -40,7 +46,16 @@ def _est_une_stat(nom: str, valeur) -> bool:
     # sans cette exclusion, mCanBeSold: true passerait pour une stat valant 1.
     if isinstance(valeur, bool) or not isinstance(valeur, int | float):
         return False
-    return nom.startswith("m") and any(mot in nom for mot in MOTS_DE_STAT)
+    return nom.endswith("Mod") or "Lethality" in nom
+
+
+def _nom_de_stat(nom: str) -> str:
+    """Le nom comme dans Data Dragon : mFlatHPPoolMod -> FlatHPPoolMod,
+    flatMPPoolMod -> FlatMPPoolMod, PhysicalLethality inchange."""
+    # Le "m" n'est un prefixe que s'il est suivi d'une majuscule (mFlat...).
+    if nom[:1] == "m" and nom[1:2].isupper():
+        nom = nom[1:]
+    return nom[:1].upper() + nom[1:]
 
 
 def flatten_item_stats(patch: str, fichier: dict) -> list[dict]:
@@ -59,7 +74,7 @@ def flatten_item_stats(patch: str, fichier: dict) -> list[dict]:
                     {
                         "patch": patch,
                         "item_id": int(numero),
-                        "stat": nom.removeprefix("m"),
+                        "stat": _nom_de_stat(nom),
                         "value": float(valeur),
                     }
                 )

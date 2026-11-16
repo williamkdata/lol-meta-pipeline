@@ -1,0 +1,67 @@
+champion_class,stat,stat_label,usefulness
+Fighter,FlatPhysicalDamageMod,AD,0.5
+Fighter,FlatMagicDamageMod,AP,0
+Fighter,FlatHPPoolMod,PV,1
+Fighter,FlatArmorMod,armure,0.5
+Fighter,FlatSpellBlockMod,resistance magique,0.5
+Fighter,AbilityHasteMod,acceleration,1
+Fighter,PercentAttackSpeedMod,vitesse d'attaque,0.5
+Fighter,FlatCritChanceMod,critique,0
+Fighter,FlatMovementSpeedMod,vitesse de deplacement,0.5
+Fighter,PercentBaseHPRegenMod,regeneration de PV,0.5
+Tank,FlatPhysicalDamageMod,AD,0
+Tank,FlatMagicDamageMod,AP,0
+Tank,FlatHPPoolMod,PV,1
+Tank,FlatArmorMod,armure,1
+Tank,FlatSpellBlockMod,resistance magique,1
+Tank,AbilityHasteMod,acceleration,1
+Tank,PercentAttackSpeedMod,vitesse d'attaque,0
+Tank,FlatCritChanceMod,critique,0
+Tank,FlatMovementSpeedMod,vitesse de deplacement,0.5
+Tank,PercentBaseHPRegenMod,regeneration de PV,0.5
+Mage,FlatPhysicalDamageMod,AD,0
+Mage,FlatMagicDamageMod,AP,0
+Mage,FlatHPPoolMod,PV,0.5
+Mage,FlatArmorMod,armure,0
+Mage,FlatSpellBlockMod,resistance magique,0
+Mage,AbilityHasteMod,acceleration,1
+Mage,PercentAttackSpeedMod,vitesse d'attaque,0
+Mage,FlatCritChanceMod,critique,0
+Mage,FlatMovementSpeedMod,vitesse de deplacement,0.5
+Mage,PercentBaseHPRegenMod,regeneration de PV,0
+Assassin,FlatPhysicalDamageMod,AD,0
+Assassin,FlatMagicDamageMod,AP,0
+Assassin,FlatHPPoolMod,PV,0
+Assassin,FlatArmorMod,armure,0
+Assassin,FlatSpellBlockMod,resistance magique,0
+Assassin,AbilityHasteMod,acceleration,0.5
+Assassin,PercentAttackSpeedMod,vitesse d'attaque,0
+Assassin,FlatCritChanceMod,critique,0
+Assassin,FlatMovementSpeedMod,vitesse de deplacement,1
+Assassin,PercentBaseHPRegenMod,regeneration de PV,0
+Marksman,FlatPhysicalDamageMod,AD,1
+Marksman,FlatMagicDamageMod,AP,0
+Marksman,FlatHPPoolMod,PV,0
+Marksman,FlatArmorMod,armure,0
+Marksman,FlatSpellBlockMod,resistance magique,0
+Marksman,AbilityHasteMod,acceleration,0.5
+Marksman,PercentAttackSpeedMod,vitesse d'attaque,1
+Marksman,FlatCritChanceMod,critique,1
+Marksman,FlatMovementSpeedMod,vitesse de deplacement,0.5
+Marksman,PercentBaseHPRegenMod,regeneration de PV,0
+Support,FlatPhysicalDamageMod,AD,0
+Support,FlatMagicDamageMod,AP,0
+Support,FlatHPPoolMod,PV,0.5
+Support,FlatArmorMod,armure,0.5
+Support,FlatSpellBlockMod,resistance magique,0.5
+Support,AbilityHasteMod,acceleration,1
+Support,PercentAttackSpeedMod,vitesse d'attaque,0
+Support,FlatCritChanceMod,critique,0
+Support,FlatMovementSpeedMod,vitesse de deplacement,1
+Support,PercentBaseHPRegenMod,regeneration de PV,0.5
+Fighter,KitRatios,ratios du kit (degats et soins),1
+Tank,KitRatios,ratios du kit (degats et soins),0.5
+Mage,KitRatios,ratios du kit (degats et soins),1
+Assassin,KitRatios,ratios du kit (degats et soins),1
+Marksman,KitRatios,ratios du kit (degats et soins),1
+Support,KitRatios,ratios du kit (degats et soins),0.5
