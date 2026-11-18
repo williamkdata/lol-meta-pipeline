@@ -1,0 +1,158 @@
+"""Les sorts du simulateur : calculer la valeur d'une formule de sort.
+
+Une formule (mSpellCalculations, dans les fichiers du jeu) est un arbre de
+morceaux : une valeur par rang, un ratio x une stat, un nombre, une somme, un
+produit... Les formules sont dans stg_kit__formulas (texte JSON), les valeurs
+par rang dans stg_kit__values.
+"""
+
+# Les stats qu'un morceau "par stat" peut demander : (code de stat, code de
+# formule) -> cle de stats_with_items. Codes decodes et verifies par deux
+# sources le 04/11/2026 (seed stat_codes) : 0 = AP, 2 = attaque, 12 = PV,
+# 1 = armure, 6 = RM ; formule 0 = totale, 2 = bonus. L'AP n'a pas de part de
+# base : AP bonus = AP totale. Les autres codes (4, 7, 8, 9...) ne sont pas
+# encore decodes : ils levent une erreur au lieu d'etre devines.
+STATS_DES_CODES = {
+    (0, 0): "ap",
+    (0, 2): "ap",
+    (2, 0): "ad",
+    (2, 2): "ad_bonus",
+    (12, 0): "hp",
+    (12, 2): "hp_bonus",
+    (1, 0): "armor",
+    (1, 2): "armor_bonus",
+    (6, 0): "mr",
+    (6, 2): "mr_bonus",
+}
+
+
+def evaluate_formula(
+    nom: str,
+    formules: dict,
+    valeurs: dict,
+    rang: int,
+    stats: dict,
+    niveau: int | None = None,
+) -> float:
+    """La valeur de la formule `nom` d'un sort, a un rang et avec des stats donnes.
+
+    formules : toutes les formules du sort, {nom: arbre} (une formule peut en
+    reprendre une autre du meme sort).
+    valeurs : les valeurs par rang du sort, {nom: [rang 1, rang 2, ...]}.
+    stats : les stats du champion (cles de stats_with_items : ap, ad, ad_bonus...).
+    niveau : le niveau du champion (1 a 20), pour les morceaux qui en dependent.
+
+    Un morceau pas encore gere, un code de stat pas encore decode ou une valeur
+    par rang absente levent une erreur qui les nomme : jamais de chiffre faux
+    en silence.
+    """
+    return _calcul(formules[nom], formules, valeurs, rang, stats, niveau)
+
+
+def _calcul(noeud, formules, valeurs, rang, stats, niveau):
+    """La valeur d'un morceau : on descend dans l'arbre (fonction recursive)."""
+
+    def sous(morceau):
+        # Raccourci : la valeur d'un sous-morceau, avec le meme contexte.
+        return _calcul(morceau, formules, valeurs, rang, stats, niveau)
+
+    type_ = noeud["__type"]
+    if type_ == "GameCalculation":
+        total = sum(sous(m) for m in noeud.get("mFormulaParts", []))
+        multiplicateur = noeud.get("mMultiplier")
+        return total * sous(multiplicateur) if multiplicateur else total
+    if type_ == "GameCalculationModified":
+        # Une autre formule du meme sort, multipliee (Ahri W : MultiFireDamage
+        # = SingleFireDamage x RepeatDamageMod).
+        reprise = formules[noeud["mModifiedGameCalculation"]]
+        return sous(reprise) * sous(noeud["mMultiplier"])
+    if type_ == "NamedDataValueCalculationPart":
+        return _valeur(noeud["mDataValue"], valeurs, rang)
+    if type_ == "NumberCalculationPart":
+        # Absent : le defaut du format, 0 (7 morceaux au 16.22, tous des
+        # formules d'affichage "tooltipOnly").
+        return noeud.get("mNumber", 0.0)
+    if type_ == "StatByCoefficientCalculationPart":
+        return noeud["mCoefficient"] * _stat(noeud, stats)
+    if type_ == "StatByNamedDataValueCalculationPart":
+        return _valeur(noeud["mDataValue"], valeurs, rang) * _stat(noeud, stats)
+    if type_ == "StatBySubPartCalculationPart":
+        return sous(noeud["mSubpart"]) * _stat(noeud, stats)
+    if type_ == "SumOfSubPartsCalculationPart":
+        return sum(sous(m) for m in noeud.get("mSubparts", []))
+    if type_ == "ProductOfSubPartsCalculationPart":
+        return sous(noeud["mPart1"]) * sous(noeud["mPart2"])
+    if type_ == "ByCharLevelFormulaCalculationPart":
+        # Une liste de 31 valeurs (niveaux 0 a 30) : la valeur du niveau N est
+        # a la position N (wiki : Leona 32 - 151, Lux 30 - 200, Braum 26 - 196).
+        return noeud["values"][_niveau(niveau)]
+    if type_ == "ByCharLevelInterpolationCalculationPart":
+        return _interpolation(noeud, _niveau(niveau))
+    if type_ == "ByCharLevelBreakpointsCalculationPart":
+        return _paliers(noeud, _niveau(niveau))
+    raise ValueError(f"morceau de formule pas encore gere : {type_}")
+
+
+def _niveau(niveau: int | None) -> int:
+    if niveau is None:
+        raise ValueError("niveau du champion requis pour un morceau par niveau")
+    return niveau
+
+
+def _courbe(niveau: int) -> float:
+    """La courbe de croissance des stats de LoL (la meme que la macro dbt
+    level_growth) : 0 au niveau 1, 17 au niveau 18."""
+    return (niveau - 1) * (0.7025 + 0.0175 * (niveau - 1))
+
+
+def _interpolation(noeud: dict, niveau: int) -> float:
+    """De mStartValue (niveau 1) a mEndValue (niveau 18). En ligne droite (wiki,
+    passif de Hwei : 40 ; 54,41 ; ...), ou sur la courbe des stats si le
+    fichier le dit (wiki, bouclier de Yasuo : 125 ; 145,12 ; ...). Bloquee au
+    niveau 18, sauf si le fichier dit de continuer (mScalePastDefaultMaxLevel :
+    sens tire du nom du champ, pas mesure). Champ absent : 0."""
+    if not noeud.get("mScalePastDefaultMaxLevel"):
+        niveau = min(niveau, 18)
+    if noeud.get("mScaleByStatProgressionMultiplier"):
+        pas = _courbe(niveau)
+    else:
+        pas = niveau - 1
+    debut = noeud.get("mStartValue", 0.0)
+    fin = noeud.get("mEndValue", 0.0)
+    return debut + (fin - debut) * pas / 17
+
+
+def _paliers(noeud: dict, niveau: int) -> float:
+    """mLevel1Value au niveau 1, puis un bonus par niveau (mInitialBonusPerLevel).
+    A chaque palier : un bonus une seule fois (mAdditionalBonusAtThisLevel), et
+    un NOUVEAU bonus par niveau a partir de ce niveau, qui REMPLACE l'ancien
+    (mBonusPerLevelAtAndAfter ; absent = 0 : la progression s'arrete, Camille Q
+    plafonne a 100 % au niveau 16). Verifie sur les vrais coups d'Ekko (19,6 %
+    des coups contre 1,2 % si le bonus s'ajoutait) et sur le wiki (30 - 140)."""
+    paliers = {p.get("mLevel"): p for p in noeud.get("mBreakpoints", [])}
+    valeur = noeud.get("mLevel1Value", 0.0)
+    par_niveau = noeud.get("mInitialBonusPerLevel", 0.0)
+    for niv in range(1, niveau + 1):
+        palier = paliers.get(niv)
+        if palier:
+            par_niveau = palier.get("mBonusPerLevelAtAndAfter", 0.0)
+            valeur += palier.get("mAdditionalBonusAtThisLevel", 0.0)
+        if niv >= 2:
+            valeur += par_niveau
+    return valeur
+
+
+def _valeur(nom: str, valeurs: dict, rang: int) -> float:
+    """La valeur par rang `nom`, au rang voulu (rang 1 = premier element)."""
+    if nom not in valeurs:
+        raise ValueError(f"valeur par rang absente : {nom}")
+    return valeurs[nom][rang - 1]
+
+
+def _stat(noeud: dict, stats: dict) -> float:
+    """La stat que demande un morceau "par stat". Le fichier omet les codes par
+    defaut : code absent = 0 (AP), formule absente = 0 (totale)."""
+    code = (noeud.get("mStat", 0), noeud.get("mStatFormula", 0))
+    if code not in STATS_DES_CODES:
+        raise ValueError(f"code de stat pas encore decode : {code}")
+    return stats[STATS_DES_CODES[code]]

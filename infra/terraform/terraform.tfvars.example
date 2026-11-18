@@ -5,3 +5,6 @@ project_id = "lol-meta-pipeline"
 # Choix de cout, voir README. Le free tier Cloud Storage (5 Go-mois) n'existe
 # QUE dans us-east1, us-west1 et us-central1.
 region = "us-central1"
+
+# Recoit le courriel si le run quotidien echoue (alerte.tf).
+alerte_courriel = "toi@exemple.com"

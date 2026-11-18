@@ -9,6 +9,7 @@ from kits import (
     flatten_champion_record,
     flatten_data_values,
     flatten_formula,
+    game_texts_url,
     kit_rows,
     load_kits_season,
     load_patch_kits,
@@ -502,6 +503,22 @@ def lignes_ambessa():
     return kit_rows("16.21", 799, "Ambessa", kit_ambessa())
 
 
+# Le texte du jeu du 16.21 (lol.stringtable.json), reduit a l'infobulle du W
+# d'Ambessa (vrai texte, coupe apres le mainText).
+TEXTES_16_21 = {
+    "generatedtip_spell_ambessaw_tooltipextended": (
+        "<mainText>Ambessa gains <shield>@Calc_Shield@ Shield</shield> for "
+        "@Shield_Duration@ seconds and braces herself for @Buff_Duration@ "
+        "seconds. She then slams the ground, dealing <physicalDamage>"
+        "@Calc_Damage_Low@ physical damage</physicalDamage> to nearby enemies, "
+        "which increases to <physicalDamage>@Calc_Damage_High@ physical "
+        "damage</physicalDamage> if she braced herself from damage from an "
+        "enemy champion, large monster, or structure."
+        "@SpellModifierDescriptionAppend@</mainText>"
+    ),
+}
+
+
 def test_kit_rows_stamps_every_row_with_patch_champion_slot_and_spell():
     lignes = lignes_ambessa()
 
@@ -587,6 +604,50 @@ def test_kit_rows_includes_the_champion_record():
     ]
 
 
+def test_kit_rows_reads_the_tooltip_of_each_spell():
+    """Chaque nombre de l'infobulle, avec sa balise et le sort qui le porte."""
+    infobulles = kit_rows("16.21", 799, "Ambessa", kit_ambessa(), TEXTES_16_21)[
+        "tooltips"
+    ]
+
+    commun = {
+        "patch": "16.21",
+        "champion_id": 799,
+        "champion_code": "Ambessa",
+        "slot": "W",
+        "spell_name": "AmbessaW",
+    }
+    assert [(ligne["name"], ligne["tag"]) for ligne in infobulles] == [
+        ("buff_duration", "mainText"),
+        ("calc_damage_high", "physicalDamage"),
+        ("calc_damage_low", "physicalDamage"),
+        ("calc_shield", "shield"),
+        ("shield_duration", "mainText"),
+        ("spellmodifierdescriptionappend", "mainText"),
+    ]
+    for ligne in infobulles:
+        assert {k: ligne[k] for k in commun} == commun
+    mots = {ligne["name"]: ligne["following_text"] for ligne in infobulles}
+    assert mots["calc_shield"] == "Shield for"
+    assert mots["calc_damage_low"] == (
+        "physical damage to nearby enemies, which increases to"
+    )
+
+
+def test_every_column_of_a_kit_row_is_in_its_table_schema():
+    """Une colonne fabriquee mais absente du schema serait refusee par BigQuery
+    au premier vrai chargement (following_text, ajoute le 18/11)."""
+    lignes = kit_rows("16.21", 799, "Ambessa", kit_ambessa(), TEXTES_16_21)
+    for table, rangees in lignes.items():
+        colonnes = {champ.name for champ in KIT_SCHEMAS[table]}
+        for rangee in rangees:
+            assert set(rangee) <= colonnes, (table, set(rangee) - colonnes)
+
+
+def test_kit_rows_without_the_game_texts_gives_no_tooltip():
+    assert lignes_ambessa()["tooltips"] == []
+
+
 def test_every_kit_table_has_a_schema_and_a_place_in_the_loading_order():
     """Une table ajoutee sans schema, ou oubliee dans l'ordre de chargement,
     ne serait jamais chargee : les trois listes doivent dire la meme chose."""
@@ -624,6 +685,9 @@ def serveur(patches_publies=("16.21",), champions=((799, "Ambessa"),)):
             {"data": {code: {"key": str(cid), "id": code} for cid, code in champions}}
         )
     for patch in patches_publies:
+        http.reponses[game_texts_url(patch)] = FakeResponse(
+            {"entries": TEXTES_16_21, "version": "test"}
+        )
         for _, code in champions:
             http.reponses[champion_file_url(patch, code)] = FakeResponse(kit_ambessa())
     return http
@@ -646,8 +710,53 @@ def test_load_patch_kits_loads_the_formulas_last():
         KIT_TABLES["values"],
         KIT_TABLES["parts"],
         KIT_TABLES["record"],
+        KIT_TABLES["tooltips"],
         KIT_TABLES["formulas"],
     ]
+
+
+def test_load_patch_kits_downloads_the_game_texts_once_per_patch():
+    """32 Mo par patch : une seule fois, pas une fois par champion."""
+    http = serveur(champions=((799, "Ambessa"), (800, "Bis")))
+
+    load_patch_kits("16.21", [(799, "Ambessa"), (800, "Bis")], http, FakeBigQuery())
+
+    assert [url for url, _ in http.appels].count(game_texts_url("16.21")) == 1
+
+
+def test_load_patch_kits_downloads_the_game_texts_only_when_needed():
+    http = serveur()
+
+    load_patch_kits(
+        "16.21", [(799, "Ambessa")], http, FakeBigQuery(), tables=("values",)
+    )
+
+    assert game_texts_url("16.21") not in [url for url, _ in http.appels]
+
+
+def test_load_patch_kits_waits_for_game_texts_not_yet_published():
+    """Texte du jeu absent (404) : les autres tables sont chargees, pas les
+    infobulles ; le patch y manquera encore, il sera repris le lendemain."""
+    http = serveur()
+    http.reponses[game_texts_url("16.21")] = FakeResponse(status_code=404)
+    client = FakeBigQuery()
+
+    load_patch_kits("16.21", [(799, "Ambessa")], http, client)
+
+    chargees = [destination for _, destination, _ in client.appels]
+    assert KIT_TABLES["tooltips"] not in chargees
+    assert KIT_TABLES["formulas"] in chargees
+
+
+def test_load_patch_kits_reports_only_the_tables_it_loaded():
+    """Le journal du 09/11 comptait aussi les tables non chargees, et trompait."""
+    bilan = load_patch_kits(
+        "16.21", [(799, "Ambessa")], serveur(), FakeBigQuery(), tables=("record",)
+    )
+
+    assert bilan["record"] == 2
+    assert "formulas" not in bilan
+    assert "tooltips" not in bilan
 
 
 def test_load_patch_kits_skips_and_counts_a_missing_champion():
@@ -694,7 +803,7 @@ def test_load_kits_season_loads_only_the_missing_patches():
 
     assert [bilan["patch"] for bilan in bilans] == ["16.21"]
     fichiers = [url for url, _ in http.appels if "communitydragon" in url]
-    assert fichiers == [champion_file_url("16.21", "Ambessa")]
+    assert fichiers == [game_texts_url("16.21"), champion_file_url("16.21", "Ambessa")]
 
 
 class FakeBigQueryParTable(FakeBigQuery):
@@ -728,7 +837,13 @@ def test_load_kits_season_completes_only_the_missing_tables():
     http = serveur(patches_publies=("16.21", "16.20"))
     deja = ["16.21", "16.20"]
     client = FakeBigQueryParTable(
-        {"values": deja, "parts": deja, "formulas": deja, "record": ["16.20"]}
+        {
+            "values": deja,
+            "parts": deja,
+            "tooltips": deja,
+            "formulas": deja,
+            "record": ["16.20"],
+        }
     )
 
     bilans = load_kits_season(["16.21.1", "16.20.1"], http, client)

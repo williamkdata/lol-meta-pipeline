@@ -71,6 +71,16 @@ models:
           arguments:
             combination_of_columns: [patch_key, champion_id, stat]
 
+  - name: stg_kit__spell_tooltips
+    description: >
+      Les nombres des infobulles des sorts, chacun avec la balise la plus
+      proche : type de degats (physicalDamage, magicDamage, trueDamage),
+      bouclier (shield), soin (healing)... tag vide hors de toute balise.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [patch_key, champion_id, slot, name, tag]
+
 unit_tests:
   # Le meme chiffre sous trois orthographes (ancien nom, nouveau nom, nom
   # hache) devient la meme stat. Un champ hors de la seed (selectionHeight :
@@ -99,3 +109,56 @@ unit_tests:
         - {patch_key: 1622, champion_id: 103, stat: hp_base, value: 590.0, source_field: baseHPModifiable}
         - {patch_key: 1610, champion_id: 103, stat: mr_per_level, value: 2.05, source_field: '{01262a25}'}
         - {patch_key: 1622, champion_id: 103, stat: resource_base, value: 418.0, source_field: 'primaryAbilityResource.{726ee5cd}'}
+
+  # L'apercu du PBE (18/11/2026, macro source_avec_apercu_pbe). Valeurs
+  # reelles d'Akshan : Q, ratio d'AD 0,70 au 16.23, 0,80 au PBE du 16.24.
+  - name: values_add_the_pbe_preview_as_an_ordinary_patch
+    model: stg_kit__values
+    overrides:
+      vars: {pbe_preview: true}
+    given:
+      - input: source('lol_raw', 'kit_data_values')
+        rows:
+          - {patch: '16.23', champion_id: 166, champion_code: Akshan, slot: Q, spell_name: AkshanQ, value_name: ADRatio, spell_rank: 1, value: 0.7}
+      - input: source('lol_raw', 'pbe_kit_data_values')
+        rows:
+          - {patch: '16.24', champion_id: 166, champion_code: Akshan, slot: Q, spell_name: AkshanQ, value_name: ADRatio, spell_rank: 1, value: 0.8}
+    expect:
+      rows:
+        - {patch_key: 1623, value: 0.7}
+        - {patch_key: 1624, value: 0.8}
+
+  # Le vrai 16.24 est sorti (0,80) ; un vieil apercu (0,75) traine encore dans
+  # la table du PBE : le vrai patch gagne, l'apercu est ignore.
+  - name: values_ignore_the_preview_once_the_real_patch_is_out
+    model: stg_kit__values
+    overrides:
+      vars: {pbe_preview: true}
+    given:
+      - input: source('lol_raw', 'kit_data_values')
+        rows:
+          - {patch: '16.23', champion_id: 166, champion_code: Akshan, slot: Q, spell_name: AkshanQ, value_name: ADRatio, spell_rank: 1, value: 0.7}
+          - {patch: '16.24', champion_id: 166, champion_code: Akshan, slot: Q, spell_name: AkshanQ, value_name: ADRatio, spell_rank: 1, value: 0.8}
+      - input: source('lol_raw', 'pbe_kit_data_values')
+        rows:
+          - {patch: '16.24', champion_id: 166, champion_code: Akshan, slot: Q, spell_name: AkshanQ, value_name: ADRatio, spell_rank: 1, value: 0.75}
+    expect:
+      rows:
+        - {patch_key: 1623, value: 0.7}
+        - {patch_key: 1624, value: 0.8}
+
+  # Hors mode apercu (dev, prod, run quotidien) : la vraie table seule. Aucune
+  # entree pour la table du PBE : si la macro y touchait, dbt la reclamerait.
+  - name: values_read_only_the_real_table_outside_preview_mode
+    model: stg_kit__values
+    # Fixe explicitement : sinon, avec la cible pbe, le mode apercu s'allume
+    # tout seul et le test ne testerait plus le mode normal.
+    overrides:
+      vars: {pbe_preview: false}
+    given:
+      - input: source('lol_raw', 'kit_data_values')
+        rows:
+          - {patch: '16.23', champion_id: 166, champion_code: Akshan, slot: Q, spell_name: AkshanQ, value_name: ADRatio, spell_rank: 1, value: 0.7}
+    expect:
+      rows:
+        - {patch_key: 1623, value: 0.7}

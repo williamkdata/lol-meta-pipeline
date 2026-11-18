@@ -32,7 +32,7 @@ SELECT
         AND gold_total >= {{ var('completed_item_min_gold') }}
     ) AS is_completed
 
-FROM {{ source('lol_raw', 'ddragon_items') }}
+FROM {{ source_avec_apercu_pbe('ddragon_items') }}
 
 -- Meme dedoublonnage que les champions : une ligne par objet et par patch.
 QUALIFY ROW_NUMBER() OVER (

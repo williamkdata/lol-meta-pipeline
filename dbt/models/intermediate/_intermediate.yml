@@ -154,6 +154,32 @@ models:
       - name: resource_regen
         data_tests: [not_null]
 
+  - name: int_kit__damage_formulas
+    description: >
+      Les formules de sorts qui sont des DEGATS, avec leur type (physical,
+      magic, true), d'apres la balise de l'infobulle qui les cite. Une ligne
+      par patch, champion, touche, formule et type : une formule peut en avoir
+      deux (Ahri Q : magique a l'aller, brut au retour).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              [patch_key, champion_id, slot, calc_name, damage_type]
+    columns:
+      - name: damage_type
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                # 'true' entre guillemets : sans eux, YAML lit le booleen vrai.
+                values: [physical, magic, 'true']
+      - name: scales_with
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [flat, target_max_hp, target_missing_hp, target_current_hp, other]
+
 unit_tests:
   # L'ordre du build et l'achat annule : Jinx achete la Lame d'infini (3031),
   # l'annule 10 s plus tard, achete Collector (6676), puis rachete la Lame.
@@ -354,3 +380,55 @@ unit_tests:
         - {champion_code: Ahri, level: 1, hp: 590.0, armor: 21.0, attack_speed: 0.668, as_bonus_pct: 0.0, resource: 418.0}
         - {champion_code: Ahri, level: 2, hp: 664.88, armor: 24.024, attack_speed: 0.6779, as_bonus_pct: 1.584, resource: 436.0}
         - {champion_code: Ahri, level: 3, hp: 743.4, armor: 27.195, attack_speed: 0.6883, as_bonus_pct: 3.245, resource: 454.875}
+  # Les formules de degats et leur type, d'apres les vraies infobulles du
+  # 16.22 (Ahri) et du 16.21 (Ambessa W). Ahri Q : une formule, deux types.
+  # Ecartes : le bouclier d'Ambessa (shield), la vitesse d'Ahri (speed), une
+  # formule jamais citee, un nombre de l'infobulle qui n'est pas une formule,
+  # et une ligne d'infobulle d'un autre patch. Les noms de formules ont des
+  # majuscules (Calc_Damage_High), ceux des infobulles non.
+  - name: damage_formulas_take_their_type_from_the_tooltip_tag
+    model: int_kit__damage_formulas
+    given:
+      - input: ref('stg_kit__formulas')
+        rows:
+          - {patch_key: 1622, patch: '16.22', champion_id: 103, champion_code: Ahri, slot: Q, spell_name: AhriQ, calc_name: TotalDamage}
+          - {patch_key: 1622, patch: '16.22', champion_id: 103, champion_code: Ahri, slot: W, spell_name: AhriW, calc_name: SingleFireDamage}
+          - {patch_key: 1622, patch: '16.22', champion_id: 103, champion_code: Ahri, slot: W, spell_name: AhriW, calc_name: MultiFireDamage}
+          - {patch_key: 1622, patch: '16.22', champion_id: 103, champion_code: Ahri, slot: W, spell_name: AhriW, calc_name: MovementSpeed}
+          - {patch_key: 1622, patch: '16.22', champion_id: 799, champion_code: Ambessa, slot: W, spell_name: AmbessaW, calc_name: Calc_Shield}
+          - {patch_key: 1622, patch: '16.22', champion_id: 799, champion_code: Ambessa, slot: W, spell_name: AmbessaW, calc_name: Calc_Damage_High}
+          - {patch_key: 1622, patch: '16.22', champion_id: 799, champion_code: Ambessa, slot: W, spell_name: AmbessaW, calc_name: Calc_Jamais_Citee}
+          # Des formules en pourcentage (mDisplayAsPercent) : de quoi ?
+          - {patch_key: 1622, patch: '16.22', champion_id: 63, champion_code: Brand, slot: P, spell_name: BrandP, calc_name: ExplosionDamage, formula: '{"__type": "GameCalculation", "mDisplayAsPercent": true}'}
+          - {patch_key: 1622, patch: '16.22', champion_id: 10, champion_code: Kayle, slot: E, spell_name: KayleE, calc_name: ActiveTotalExecuteDamage, formula: '{"__type": "GameCalculation", "mDisplayAsPercent": true}'}
+          - {patch_key: 1622, patch: '16.22', champion_id: 234, champion_code: Viego, slot: Q, spell_name: ViegoQ, calc_name: TotalPercentHealthOnHit, formula: '{"__type": "GameCalculation", "mDisplayAsPercent": true}'}
+          - {patch_key: 1622, patch: '16.22', champion_id: 202, champion_code: Jhin, slot: P, spell_name: JhinP, calc_name: TotalADPercent, formula: '{"__type": "GameCalculation", "mDisplayAsPercent": true}'}
+      - input: ref('stg_kit__spell_tooltips')
+        rows:
+          - {patch_key: 1622, champion_id: 103, slot: Q, spell_name: AhriQ, name: totaldamage, tag: magicDamage}
+          - {patch_key: 1622, champion_id: 103, slot: Q, spell_name: AhriQ, name: totaldamage, tag: trueDamage}
+          - {patch_key: 1622, champion_id: 103, slot: Q, spell_name: AhriQ, name: spellmodifierdescriptionappend, tag: mainText}
+          - {patch_key: 1622, champion_id: 103, slot: W, spell_name: AhriW, name: singlefiredamage, tag: magicDamage}
+          - {patch_key: 1622, champion_id: 103, slot: W, spell_name: AhriW, name: multifiredamage, tag: magicDamage}
+          - {patch_key: 1622, champion_id: 103, slot: W, spell_name: AhriW, name: movementspeed, tag: speed}
+          - {patch_key: 1622, champion_id: 799, slot: W, spell_name: AmbessaW, name: calc_shield, tag: shield}
+          - {patch_key: 1622, champion_id: 799, slot: W, spell_name: AmbessaW, name: calc_damage_high, tag: physicalDamage}
+          # Fictif : le meme Q d'Ahri, un autre patch, une autre balise. Une
+          # jointure sans le patch lui donnerait un 3e type (physique).
+          - {patch_key: 1621, champion_id: 103, slot: Q, spell_name: AhriQ, name: totaldamage, tag: physicalDamage}
+          # Les mots qui suivent le nombre (texte du jeu, 16.22).
+          - {patch_key: 1622, champion_id: 63, slot: P, spell_name: BrandP, name: explosiondamage, tag: magicDamage, following_text: '% max Health magic damage to surrounding enemies.'}
+          - {patch_key: 1622, champion_id: 10, slot: E, spell_name: KayleE, name: activetotalexecutedamage, tag: magicDamage, following_text: '% missing Health magic damage. This attack upgrades when Kayle reaches'}
+          - {patch_key: 1622, champion_id: 234, slot: Q, spell_name: ViegoQ, name: totalpercenthealthonhit, tag: physicalDamage, following_text: '% current Health physical damage. His first Attack against an enemy'}
+          - {patch_key: 1622, champion_id: 202, slot: P, spell_name: JhinP, name: totaladpercent, tag: physicalDamage, following_text: 'bonus Attack Damage'}
+    expect:
+      rows:
+        - {patch_key: 1622, champion_code: Ahri, slot: Q, calc_name: TotalDamage, damage_type: magic, scales_with: flat}
+        - {patch_key: 1622, champion_code: Ahri, slot: Q, calc_name: TotalDamage, damage_type: 'true', scales_with: flat}
+        - {patch_key: 1622, champion_code: Ahri, slot: W, calc_name: SingleFireDamage, damage_type: magic, scales_with: flat}
+        - {patch_key: 1622, champion_code: Ahri, slot: W, calc_name: MultiFireDamage, damage_type: magic, scales_with: flat}
+        - {patch_key: 1622, champion_code: Ambessa, slot: W, calc_name: Calc_Damage_High, damage_type: physical, scales_with: flat}
+        - {patch_key: 1622, champion_code: Brand, slot: P, calc_name: ExplosionDamage, damage_type: magic, scales_with: target_max_hp}
+        - {patch_key: 1622, champion_code: Kayle, slot: E, calc_name: ActiveTotalExecuteDamage, damage_type: magic, scales_with: target_missing_hp}
+        - {patch_key: 1622, champion_code: Viego, slot: Q, calc_name: TotalPercentHealthOnHit, damage_type: physical, scales_with: target_current_hp}
+        - {patch_key: 1622, champion_code: Jhin, slot: P, calc_name: TotalADPercent, damage_type: physical, scales_with: other}

@@ -22,6 +22,19 @@ lol_meta:
       threads: 4
       maximum_bytes_billed: 1073741824
 
+    # L'apercu du PBE (18/11/2026) : comme dev, mais dans un dataset a part
+    # (lol_analytics_pbe, cree par dbt au premier run). La macro
+    # source_avec_apercu_pbe s'allume d'elle-meme avec cette cible. Ni dev ni
+    # prod ne voient jamais l'apercu.
+    pbe:
+      type: bigquery
+      method: oauth
+      project: "{{ env_var('GCP_PROJECT_ID', 'lol-meta-pipeline') }}"
+      dataset: lol_analytics_pbe
+      location: "{{ env_var('GCP_REGION', 'us-central1') }}"
+      threads: 4
+      maximum_bytes_billed: 1073741824
+
     prod:
       type: bigquery
       method: "{{ 'service-account' if env_var('DBT_GCP_KEYFILE', '') else 'oauth' }}"

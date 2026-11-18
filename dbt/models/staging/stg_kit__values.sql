@@ -14,7 +14,7 @@ SELECT
     spell_rank,
     value
 
-FROM {{ source('lol_raw', 'kit_data_values') }}
+FROM {{ source_avec_apercu_pbe('kit_data_values', 'pbe_kit_data_values') }}
 
 -- Les 60 entrees speciales Jade_ du 16.15 : meme filtre que pour les champions.
 WHERE STRPOS(champion_code, '_') = 0

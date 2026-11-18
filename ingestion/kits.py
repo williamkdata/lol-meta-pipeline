@@ -14,6 +14,7 @@ from google.cloud import bigquery
 
 from bigquery_loader import load_rows
 from ddragon import CDN_URL, LANGUE, fetch_versions, patch_of, season_versions
+from tooltips import spell_tooltip_key, tooltip_number_tags
 
 journal = logging.getLogger(__name__)
 
@@ -27,10 +28,13 @@ KIT_TABLES = {
     # La fiche du champion (stats de base, gain par niveau, ressource) :
     # ajoutee le 09/11/2026 pour le simulateur.
     "record": f"{KIT_DATASET}.kit_champion_record",
+    # Les nombres des infobulles et leur balise (type de degats, bouclier...) :
+    # ajoutees le 16/11/2026 pour le simulateur. Source : le texte du jeu.
+    "tooltips": f"{KIT_DATASET}.kit_spell_tooltips",
 }
 # Charges dans cet ordre : kit_formulas EN DERNIER sert de marqueur, un patch
 # qui y figure est complet.
-ORDRE_CHARGEMENT = ("values", "parts", "record", "formulas")
+ORDRE_CHARGEMENT = ("values", "parts", "record", "tooltips", "formulas")
 
 
 def _champ(nom, type_, mode="NULLABLE"):
@@ -81,6 +85,16 @@ KIT_SCHEMAS = {
         # (baseHPModifiable, primaryAbilityResource.{726ee5cd}...).
         _champ("field", "STRING", "REQUIRED"),
         _champ("value", "FLOAT", "REQUIRED"),
+    ],
+    "tooltips": [
+        *_COMMUN,
+        # Le nom du nombre dans l'infobulle, en minuscules (comme calc_name
+        # en minuscules) ; la balise la plus proche, vide s'il n'y en a pas.
+        _champ("name", "STRING", "REQUIRED"),
+        _champ("tag", "STRING"),
+        # Les mots qui suivent le nombre ("% max Health magic damage") : ce
+        # qu'il est. Ajoute le 18/11/2026 (de quoi un pourcentage est-il pris).
+        _champ("following_text", "STRING"),
     ],
 }
 
@@ -254,12 +268,22 @@ def flatten_champion_record(fichier: dict) -> list[dict]:
     return lignes
 
 
-def kit_rows(patch: str, champion_id: int, champion_code: str, fichier: dict) -> dict:
-    """Tout le kit d'un champion pour un patch, en quatre listes de lignes :
+def kit_rows(
+    patch: str,
+    champion_id: int,
+    champion_code: str,
+    fichier: dict,
+    textes: dict | None = None,
+) -> dict:
+    """Tout le kit d'un champion pour un patch, en cinq listes de lignes :
     formulas (une par formule, arbre entier en texte canonique), parts (une par
     morceau de formule), values (une par valeur et par rang), record (une par
-    nombre de la fiche du champion : stats de base...). Pour les sorts, seuls
-    ceux des touches Q, W, E, R et du passif comptent."""
+    nombre de la fiche du champion : stats de base...), tooltips (une par
+    nombre de l'infobulle d'un sort, avec sa balise). Pour les sorts, seuls
+    ceux des touches Q, W, E, R et du passif comptent.
+
+    textes : le texte du jeu du patch ({cle: texte}). Sans lui, pas de ligne
+    d'infobulle."""
     commun = {
         "patch": patch,
         "champion_id": champion_id,
@@ -270,6 +294,7 @@ def kit_rows(patch: str, champion_id: int, champion_code: str, fichier: dict) ->
         "parts": [],
         "values": [],
         "record": [{**commun, **nombre} for nombre in flatten_champion_record(fichier)],
+        "tooltips": [],
     }
 
     for touche, chemin in spell_slots(fichier).items():
@@ -286,6 +311,11 @@ def kit_rows(patch: str, champion_id: int, champion_code: str, fichier: dict) ->
 
         for valeur in flatten_data_values(sort):
             lignes["values"].append({**base, **valeur})
+
+        infobulle = (textes or {}).get(spell_tooltip_key(touche, base["spell_name"]))
+        if infobulle:
+            for nombre in tooltip_number_tags(infobulle):
+                lignes["tooltips"].append({**base, **nombre})
     return lignes
 
 
@@ -294,6 +324,22 @@ def champion_file_url(patch: str, code: str) -> str:
     sont en minuscules ; un dossier par patch (16.1 ... 16.21)."""
     dossier = code.lower()
     return f"{CDRAGON_URL}/{patch}/game/data/characters/{dossier}/{dossier}.bin.json"
+
+
+def game_texts_url(patch: str) -> str:
+    """Le texte du jeu en anglais d'un patch (toutes les infobulles), sur
+    CommunityDragon : un fichier d'environ 32 Mo."""
+    return f"{CDRAGON_URL}/{patch}/game/en_us/data/menu/en_us/lol.stringtable.json"
+
+
+def fetch_game_texts(patch: str, session) -> dict | None:
+    """Le texte du jeu d'un patch, {cle: texte} ; None s'il n'est pas encore
+    publie (404), comme les fichiers des champions."""
+    reponse = session.get(game_texts_url(patch), timeout=TIMEOUT_S)
+    if reponse.status_code == 404:
+        return None
+    reponse.raise_for_status()
+    return reponse.json()["entries"]
 
 
 def champions_of(version: str, session) -> list[tuple[int, str]]:
@@ -314,13 +360,15 @@ def load_patch_kits(
     en dernier ; une partie seulement pour completer un patch sans rien effacer."""
     lignes = {table: [] for table in KIT_TABLES}
     absents = []
+    # Une seule fois par patch (32 Mo), et seulement si la table en a besoin.
+    textes = fetch_game_texts(patch, session) if "tooltips" in tables else None
     for champion_id, code in champions:
         reponse = session.get(champion_file_url(patch, code), timeout=TIMEOUT_S)
         if reponse.status_code == 404:
             absents.append(code)
             continue
         reponse.raise_for_status()
-        kit = kit_rows(patch, champion_id, code, reponse.json())
+        kit = kit_rows(patch, champion_id, code, reponse.json(), textes)
         for table, nouvelles in kit.items():
             lignes[table].extend(nouvelles)
 
@@ -331,7 +379,9 @@ def load_patch_kits(
         "patch": patch,
         "champions": len(champions) - len(absents),
         "absents": absents,
-        **{table: len(nouvelles) for table, nouvelles in lignes.items()},
+        # Seulement les tables CHARGEES : le 09/11, le journal comptait aussi
+        # les lignes fabriquees pour des tables non chargees, et trompait.
+        **{table: len(lignes[table]) for table in tables},
     }
     journal.info("kits %s : %s", patch, bilan)
     return bilan

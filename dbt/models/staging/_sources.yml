@@ -58,6 +58,18 @@ sources:
           Les valeurs par rang des sorts (rangs 1 a 6). Le Q de Rek'Sai contient
           deux fois BuffDuration dans le fichier du jeu.
 
+      # L'apercu du PBE, le serveur de test de Riot (18/11/2026,
+      # ingestion/pbe.py, lance a la main). Memes schemas que les vraies
+      # tables, une seule version a la fois (remplacees a chaque chargement),
+      # etiquetees du patch que le PBE prepare. Lues seulement en mode apercu
+      # (macro source_avec_apercu_pbe, cible pbe) : jamais en dev ni en prod.
+      - name: pbe_kit_data_values
+        description: Apercu du PBE, memes colonnes que kit_data_values.
+      - name: pbe_kit_formula_parts
+        description: Apercu du PBE, memes colonnes que kit_formula_parts.
+      - name: pbe_item_stats
+        description: Apercu du PBE, memes colonnes que item_stats.
+
       - name: kit_champion_record
         description: >
           La fiche du champion (stats de base, gain par niveau, ressource...) :
@@ -65,6 +77,14 @@ sources:
           rien renommer. Les noms changent selon le patch (renommages de Riot
           au 16.5, noms haches) : la traduction se fait en staging, avec la
           seed champion_record_fields. Contient les 60 entrees Jade_ du 16.15.
+
+      - name: kit_spell_tooltips
+        description: >
+          Les nombres des infobulles des sorts (texte du jeu, CommunityDragon,
+          lol.stringtable.json), un par ligne, avec la balise la plus proche
+          qui l'entoure (magicDamage, shield...) ; tag vide hors de toute
+          balise. name en minuscules. Ajoutee le 16/11/2026, premier
+          chargement au run du 17/11. Contient les entrees Jade_ du 16.15.
 
   - name: lol_raw_ladder
     description: >

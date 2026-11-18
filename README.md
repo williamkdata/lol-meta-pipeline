@@ -10,7 +10,11 @@ Pipeline de données sur la meta de *League of Legends* : quels champions, build
 >
 > **Depuis le 06/11/2026 : un bulletin de patch.** Trois mesures, recalculées à chaque patch, disent si l'on peut croire les builds : la fidélité de notre lecture des achats, le duel entre le build le plus joué et sa meilleure alternative, et l'« expérience naturelle » du patch (le moteur théorique prédit le sens d'un changement de Riot, le ladder confirme ou contredit).
 >
-> **Depuis le 09/11/2026 : vers un simulateur de combat.** Le but : proposer un build à partir des stats des champions et des objets (stats pures, effets, coût). Étape 1 terminée (16/11) : les stats de chaque champion à chaque niveau, lues dans les fichiers du jeu et vérifiées sur les vraies parties. Étape 2 en cours : le mannequin (les attaques de base sont simulées ; les sorts suivent).
+> **Depuis le 09/11/2026 : vers un simulateur de combat.** Le but : proposer un build à partir des stats des champions et des objets (stats pures, effets, coût). Étape 1 terminée (16/11) : les stats de chaque champion à chaque niveau, lues dans les fichiers du jeu et vérifiées sur les vraies parties. Étape 2 en cours : le mannequin (attaques de base simulées ; 90 % des formules de dégâts des sorts calculées, avec leur type et, pour les pourcentages, ce qu'ils multiplient).
+>
+> **Depuis le 18/11/2026 : la collecte ne dépend plus du PC.** Un job Cloud Run, réveillé chaque jour par Cloud Scheduler, fait tout le run quotidien (collectes puis `dbt build`), décrit en Terraform, sans fichier de clé de compte de service, pour environ 0 € par mois. Un courriel part si le run échoue.
+>
+> **Depuis le 18/11/2026 : prédire un patch avant sa sortie.** Le serveur de test de Riot (PBE) prépare le patch suivant pendant deux semaines. Un aperçu de ses fichiers, chargé à part, passe dans le moteur théorique : les prédictions sont écrites et **datées** dans [`predictions/`](predictions/) avant la sortie, avec la façon dont elles seront jugées. Nom retenu pour le futur produit : **Farsight** (l'altération de longue-vue : voir loin, avant les statistiques).
 
 ## Sources
 
@@ -32,9 +36,14 @@ API Riot ─────────┘    brut gzip,        lol_raw (permanent)
                        30 jours          lol_raw_ladder (60 j)    intermédiaire (vues)
                                                                  marts (tables), seeds relues
 
-                Airflow (local, Docker) : un DAG par jour à 14 h 30 UTC
-  [Data Dragon, Oracle's Elixir, ladder Riot, kits, stats d'objets] en parallèle
-                                ->  dbt deps  ->  dbt build
+     Cloud Scheduler (14 h 30 UTC) -> job Cloud Run lol-quotidien (image Docker)
+  ingestion/quotidien.py : Data Dragon, kits, stats d'objets, ladder Riot, Oracle's Elixir
+           (chacune avec ses relances)  ->  dbt build (cible prod)
+           clé Riot lue dans Secret Manager ; courriel d'alerte si un run échoue
+
+  (Airflow, en local, est gardé en pause : retour possible au PC si besoin.)
+
+  À la main : ingestion/pbe.py -> lol_raw.pbe_*  ->  dbt (cible pbe) -> lol_analytics_pbe
 ```
 
 ## Ce qui tourne aujourd'hui
@@ -50,6 +59,8 @@ API Riot ─────────┘    brut gzip,        lol_raw (permanent)
 | 7 | Marts du ladder : matchups, builds, runes, timings | ✅ |
 | 8 | Mart de diffusion de la meta, pro → ladder | ✅ |
 | 9 | Coûts mesurés, limites, bilan | ✅ |
+| 10 | Collecte sortie du PC : job Cloud Run + Cloud Scheduler + Secret Manager + alerte, en Terraform | ✅ 18/11 |
+| 11 | Aperçu du PBE et prédictions datées avant la sortie d'un patch | ✅ 18/11 (première prédiction) |
 
 ## Les marts
 
@@ -125,7 +136,20 @@ Additionner des stats ne suffit pas : un objet a des effets, et un champion n'a 
 - **le critique, mesuré** : les coups critiques ont leur propre nom dans le récapitulatif de mort. Le pic est à 200 % (et vers 230 % avec la Lame d'infini, qui donne +30 %). Le fichier du jeu le dit aussi, et connaît le cas d'Ashe (100 %) ;
 - **les dégâts par seconde et le temps pour tuer** avec les attaques de base : les coups tombent un par un, le premier tout de suite. Jinx niveau 11 (Lame d'infini, Lord Dominik, Dague) tue Zed niveau 11 sans objet en 7 coups, 8,1 s.
 
-Reste à faire pour l'étape 2 : les sorts (type de dégâts, et lesquels des calculs d'un sort sont des dégâts), puis valider le mannequin sur de vrais coups simples.
+- **les formules des sorts, évaluées** (`simulateur/sorts.py`) : une fonction récursive parcourt l'arbre de chaque formule (sommes, produits, ratios de stats, valeurs par rang, valeurs selon le niveau, paliers) ; un morceau inconnu lève une erreur. **90 % des formules de dégâts sont calculables au 16.22** ;
+- **lesquels des calculs d'un sort sont des dégâts, et de quel type** : lus dans le **texte du jeu** (les infobulles, CommunityDragon), où chaque nombre est entouré d'une balise (`magicDamage`, `physicalDamage`, `trueDamage`, ou bouclier, soin…). La balise **la plus proche** compte (une pile, pas une expression régulière : la première version prenait la balise extérieure et trouvait 962 faux désaccords). Même type que Data Dragon pour **1 028 formules sur 1 028** ; une formule peut avoir deux types (Ahri Q : magique à l'aller, brut au retour) ;
+- **« 9 % de quoi ? »** : pour une formule affichée en pourcentage, les mots qui suivent le nombre dans l'infobulle disent ce qu'il multiplie (`scales_with`) : **PV max, PV manquants, PV actuels** de la cible, ou autre chose. Au 16.22 et au 16.23 : 69 formules en pourcentage, **47 PV max, 7 PV manquants, 5 PV actuels, 10 autres** (AD bonus de Jhin, Grit de Sett…). Une erreur connue : Udyr Q2, dont l'infobulle dit « max Health damage » **avant** le nombre.
+
+Reste à faire pour l'étape 2 : les sorts entiers dans le mannequin, décoder les derniers codes de stats, puis valider le mannequin sur de vrais coups simples.
+
+## Prédire un patch avant sa sortie : le PBE
+
+Le bulletin juge le moteur théorique **après** un patch. Le PBE, le serveur de test de Riot, permet de prédire **avant** : le patch suivant y est testé environ deux semaines, et CommunityDragon publie ses fichiers dans un dossier `pbe`.
+
+- **Un aperçu, jamais dans les vraies tables.** `ingestion/pbe.py` (lancé à la main) lit le numéro du patch que prépare le PBE, télécharge les valeurs et formules des sorts et les stats des objets **avec les mêmes fonctions que la collecte normale**, et les charge dans des tables à part (`lol_raw.pbe_*`), **remplacées** à chaque fois. Charger le PBE sous le nom « 16.24 » dans les vraies tables aurait été un piège : la collecte saute les patches déjà en base, le vrai 16.24 aurait été ignoré à sa sortie. Il refuse un patch déjà sorti, et un aperçu vide avant tout chargement.
+- **Un mode aperçu dans dbt, à part.** Une macro (`source_avec_apercu_pbe`), appelée dans le `FROM` de 6 modèles de staging, renvoie la vraie table seule en dev et en prod. Avec la cible dbt `pbe` (son propre dataset, `lol_analytics_pbe`), elle ajoute l'aperçu comme un patch ordinaire ; le vrai patch, une fois sorti, gagne toujours. Data Dragon ne publiant un patch qu'à sa sortie, son dernier patch est emprunté — le dernier **par numéro** (16.23 > 16.9), pas par texte. Les tables sont collées **par nom de colonne** (`UNION ALL CORRESPONDING`), pas par position.
+- **Des prédictions datées, jugées d'après une règle fixée d'avance.** Chaque aperçu ajoute une section à `predictions/<patch>.md` : date, version exacte du PBE, ce qui change, la prédiction, et ce qu'on peut espérer trancher. Le juge est `mart_patch_experiments` (part de jeu et victoires, fourchettes de Wilson séparées, référence « rien ne change »). On ne réécrit jamais une prédiction passée.
+- **Premier aperçu (18/11, 16.24)** : le cycle de test commence, **un seul champion change** (Akshan : ratio d'AD du Q 0,70 → 0,80), aucun objet. Contrôle dans BigQuery : formules et objets identiques au 16.23, 6 valeurs de plus (Akshan). **Prédiction : Akshan en hausse (+3,7 % de valeur pour ses objets).** Akshan est rare (0,35 % des joueurs au 16.22) : sa part de jeu pourra se juger (fourchette ~±0,03 point sur un patch complet), son taux de victoire probablement pas (~±5 points).
 
 ## Choix notables
 
@@ -174,6 +198,18 @@ Run du 03/11 après correction : **825 requêtes en 17 minutes** (contre plus de
 - Un `dbt build` a déjà affiché « réussi » avec zéro test lancé, à cause d'un cache d'analyse périmé : les runs d'Airflow utilisent `--no-partial-parse`.
 - Une partie compte 10 picks : les taux de pick d'un patch font 10. Ce test a attrapé un taux calculé avec un numérateur et un dénominateur venus de deux tables d'âges différents (8,70 au lieu de 10).
 
+**Un run dans le cloud, sans fichier de clé.** Le job Cloud Run tourne sous l'identité du compte de service du pipeline, fournie par Google (« Application Default Credentials ») : aucun fichier de clé à créer, copier ou faire fuiter. Le même code garde le fichier de clé en local (Airflow) : une seule fonction (`ingestion/identite.py`) choisit. Drive (Oracle's Elixir) l'accepte, vérifié au premier run. La clé Riot est dans Secret Manager, **collée à la main dans la console** : sa valeur ne passe jamais par Terraform (elle finirait en clair dans l'état de Terraform).
+
+**Un chef d'orchestre en Python plutôt qu'Airflow dans le cloud.** `ingestion/quotidien.py` lance chaque collecte avec ses relances (Oracle's Elixir : 4 essais à 2 h d'intervalle, son quota Drive se libère lentement), toutes même si l'une échoue, puis `dbt build` seulement si toutes ont réussi, et sort avec un code d'erreur si une étape a échoué. Cloud Run ne relance pas le job entier : il recollecterait tout et consommerait le quota Riot pour rien.
+
+**Une image fabriquée en deux temps.** Un atelier installe les dépendances avec uv, l'image finale ne garde que le résultat : **1,49 Go → 1,2 Go, ~250 Mo compressée**, sous les 0,5 Gio gratuits de l'étagère d'images. Un `.dockerignore` écarte `.env`, `secrets/` et tout ce dont le job n'a pas besoin ; l'image tourne sans droits d'administrateur. Fabriquée avec `--provenance=false` : sinon Docker Desktop ajoute une attestation, l'étagère compte 3 versions par image, et la règle « garder les 3 dernières » n'en garderait qu'une (vu en listant l'étagère).
+
+**Une bascule dans un ordre sûr.** Jamais deux collectes en même temps : elles partagent la clé, et verraient les mêmes nouvelles parties comme absentes de la base. Le premier run dans le cloud a été lancé après celui du PC (relance vérifiée sans doublon : 2 275 parties, 10 lignes chacune) ; puis le DAG du PC a été mis en pause **avant** que le réveil du cloud soit activé.
+
+**Après un `apply`, un `plan`.** Juste après la création du réveil, Terraform voulait encore lui ajouter « 0 relance » : Google ne renvoie pas un réglage qui vaut sa valeur par défaut. Le bloc inutile a été retiré (0 relance est le défaut, vérifié dans la documentation de l'API). « Apply complete » dit que la création a marché, pas que le code et le cloud disent la même chose.
+
+**Une alerte testée de bout en bout.** Un courriel part si le bilan du run dit qu'une étape a échoué, si le conteneur sort en erreur, ou si le réveil ne lance pas le job ; une étape échouée puis réussie à la relance ne déclenche rien. Vérifié : 0 ligne du run réussi ne la déclenche ; une fausse ligne d'échec, écrite par l'API du journal, a bien envoyé le courriel — au deuxième essai : le premier, écrit 2 minutes après la création de la règle, était arrivé trop tôt.
+
 ## Coût et volume
 
 **Le free tier GCP est calculé par compte de facturation, pas par projet.** Les 10 Gio de stockage et 1 Tio de requêtes BigQuery gratuits par mois sont donc **partagés** avec le projet [Vélib'](https://github.com/williamkdata/data-engineering-portfolio), sur le même compte.
@@ -201,9 +237,12 @@ Volume par partie du ladder, mesuré sur le premier run réel : ~70 Ko dans BigQ
 
 **Les runs des 10 et 11/11** : 771 et 776 parties, 1 et 3 refus 429 ; `dbt build` **186 PASS, 2 avertissements connus, 0 erreur** (bulletin de patch et fiche des champions compris).
 
+**Le premier run dans le cloud, le 18/11/2026** (après celui du PC, donc 47 parties nouvelles seulement) : **25 minutes**, 1 096 requêtes à Riot, 0 refus 429 ; Oracle's Elixir 119 232 lignes ; `dbt build` **225 PASS, 2 avertissements connus, 0 erreur**. Soit ~1 500 vCPU-secondes et ~3 000 Gio-secondes : **moins de 1 %** du niveau gratuit mensuel des jobs Cloud Run (240 000 vCPU-s et 450 000 Gio-s par compte de facturation). Un run complet (~1 h, 1 vCPU, 2 Gio) en prendrait environ la moitié sur un mois. Le réveil fait partie des 3 gratuits ; l'image pèse 261 Mo sur 0,5 Gio gratuits ; l'alerte est gratuite jusqu'au 31/08/2027, puis 0,35 $ par mois (prix vérifiés sur les pages officielles le 18/11).
+
 ## Limites
 
-- **Airflow tourne en local** : la collecte n'a lieu que si le PC est allumé à 14 h 30 UTC. La fenêtre de 2 jours absorbe un jour manqué ; au-delà, des parties sont perdues. Airflow ne rejoue que le dernier jour manqué (`catchup=False`). Et au réveil du PC, le run en retard démarre avant que le réseau soit prêt (2 fois en novembre) : les relances automatiques le rattrapent, mais celle d'Oracle's Elixir n'a lieu qu'au bout de 2 heures.
+- **Le run quotidien tourne dans le cloud depuis le 18/11** ; avant, il dépendait du PC (environ 2 200 parties perdues pendant une mise en veille). Il reste des limites : un jour manqué au-delà de la fenêtre de 2 jours fait perdre des parties ; les pauses de 2 h des relances d'Oracle's Elixir sont facturées comme du temps de calcul (toujours dans le gratuit).
+- **L'aperçu du PBE est un brouillon de Riot** : ses valeurs changent avant la sortie, d'où une prédiction finale le jour du patch. Un champion nouveau, présent au PBE mais pas encore dans Data Dragon, manquerait à l'aperçu ; un prix ou un nom d'objet changé au PBE n'est pas vu (Data Dragon est emprunté au dernier patch publié).
 - **Un échantillon, pas tout le ladder.** La clé *personal* autorise 100 requêtes par 2 minutes : jusqu'à 800 nouvelles parties par jour (environ 52 minutes de collecte), à partir des 1 000 joueurs Challenger et Grandmaster. Les parties sont celles de joueurs du haut du classement, pas un tirage aléatoire.
 - **La diffusion de la meta est censurée à gauche.** La ladder n'est collectée que depuis le patch 16.21 ; aucun délai n'est mesurable tant qu'un champion n'est pas entré dans la meta pendant la fenêtre observée. Le pro, lui, saute des patches (aucun match au 16.19) : un délai en patches se lit avec ça en tête.
 - **Les seuils viennent d'un premier échantillon** (parties ≥ 15 min, objets ≥ 2 000 po) et seront revérifiés sur un patch complet. Aucun seuil de volume n'est encore imposé aux matchups : chaque taux est publié avec sa fourchette de confiance, qui dit elle-même quand un effectif est trop faible.
@@ -213,7 +252,7 @@ Volume par partie du ladder, mesuré sur le premier run réel : ~70 Ko dans BigQ
 - **Les formules des sorts viennent d'une source communautaire** (CommunityDragon), non officielle : à valider avant toute demande de clé de production. Une formule seulement renommée (contenu identique) est reconnue comme telle ; si Riot la renomme **et** en change la structure, elle reste signalée comme un retrait plus un ajout.
 - **La létalité n'a pas encore de prix** : elle est chargée depuis le 09/11, mais aucun objet de base ne donne que de la létalité, donc la règle du prix d'un point ne s'applique pas. Un prix dérivé est prévu. Même chose pour le vol de vie, la ténacité, les pénétrations, les soins et boucliers : non valorisés.
 - **Le moteur théorique ne voit ni les coûts en mana, ni les temps de recharge, ni les dégâts de base, ni les effets des objets** : c'est l'angle mort que le bulletin a révélé (Mel au 16.22), et que le simulateur doit combler.
-- **Le simulateur ne connaît encore ni les sorts ni les effets** : attaques de base seulement, dégâts moyens (le critique compte en moyenne), sans le temps d'armer le premier coup ni la régénération de la cible. La pénétration suit le wiki, sans mesure possible avec nos données.
+- **Le simulateur ne connaît encore ni les sorts entiers ni les effets** : attaques de base, plus le calcul de 90 % des formules de dégâts des sorts ; dégâts moyens (le critique compte en moyenne), sans le temps d'armer le premier coup ni la régénération de la cible. La pénétration suit le wiki, sans mesure possible avec nos données. Les codes de stats 4, 7, 8, 9… ne sont pas encore décodés (une formule qui les utilise lève une erreur).
 - **Les groupes d'objets ne sont pas encore chargés** : le jeu interdit certains cumuls (un seul objet du groupe « Dernier souffle » : Lord Dominik, Rappel mortel… ; une seule paire de bottes ; 87 groupes limités au 16.22). À charger avant le moteur de build, qui ne doit jamais proposer un build impossible.
 - **Les verdicts du bulletin sont instables en début de patch** : beaucoup de duels se renversent en un ou deux jours. Ils ne doivent pas être montrés aux joueurs avant d'avoir tenu dans la durée.
 - **La famille d'un objet ne dépend pas de qui l'achète.** La Force de la trinité est un objet de combattant : le build d'Ezreal (Trinité, Manamune, Faim insatiable) est donc classé « combattant », alors qu'un joueur dirait « Ezreal Manamune ». Choix assumé (la règle qui corrigeait ce cas en cassait d'autres).
@@ -224,15 +263,19 @@ Volume par partie du ladder, mesuré sur le premier run réel : ~70 Ko dans BigQ
 
 ```
 ingestion/        Data Dragon, Oracle's Elixir, client Riot (limiteur), collecteur du ladder,
-                  kits des champions (formules des sorts, fiche des stats) et stats
-                  des objets (CommunityDragon)
-infra/terraform/  bucket, datasets, compte de service, IAM minimal
+                  kits des champions (formules des sorts, fiche des stats, texte du jeu)
+                  et stats des objets (CommunityDragon) ; quotidien.py (le chef
+                  d'orchestre du job) ; identite.py ; pbe.py (aperçu du PBE)
+infra/terraform/  bucket, datasets, compte de service, IAM minimal ; job.tf (job Cloud
+                  Run, réveil, étagère d'images, coffre de la clé) ; alerte.tf
+job/              Dockerfile du job quotidien (fabrication en deux temps)
+predictions/      prédictions datées, faites avant la sortie d'un patch
 airflow/          image, docker-compose, DAG quotidien lol_daily
 dbt/              staging (vues) -> intermédiaire (vues) -> marts (tables), seeds
                   relues (codes de stats, familles d'objets, objets transformés,
                   noms des champs de la fiche), macros, tests de données
 simulateur/       simulateur de combat (Python pur) : degats, stats avec objets,
-                  temps pour tuer le mannequin
+                  temps pour tuer le mannequin, formules des sorts
 tests/            pytest hors ligne : faux clients HTTP, BigQuery et Storage ;
                   fonctions du simulateur
 prototypes/       essais : LLM local (Ollama) qui appelle un outil sur un mart ;
@@ -249,7 +292,16 @@ uv run pytest
 uv run python ingestion/ladder.py --max-joueurs 20 --max-parties 30
 ```
 
-Orchestration : depuis `airflow/`, `docker compose up -d`, puis l'interface sur `http://localhost:8081`. La clé Riot est montée dans les conteneurs en lecture seule, jamais copiée.
+Orchestration dans le cloud : `infra/terraform` crée le job, son réveil, l'étagère d'images, le coffre de la clé et l'alerte (sur un projet neuf, d'abord avec `-var deployer_le_job=false` : le job ne peut naître sans son image ni sa clé). L'image se fabrique et se dépose avec les deux commandes écrites en tête de `job/Dockerfile` ; la clé Riot se colle à la main dans Secret Manager.
+
+Orchestration locale (en pause depuis le 18/11, gardée pour revenir au PC si besoin) : depuis `airflow/`, `docker compose up -d`, puis l'interface sur `http://localhost:8081`. La clé Riot est montée dans les conteneurs en lecture seule, jamais copiée.
+
+Prédire le prochain patch (à la main) :
+
+```bash
+uv run python ingestion/pbe.py
+cd dbt && uv run dbt build --target pbe --select +mart_patch_predictions --exclude "test_type:unit" --indirect-selection cautious --profiles-dir profiles
+```
 
 ## Attribution et conditions d'utilisation
 

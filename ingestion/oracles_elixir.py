@@ -1,14 +1,13 @@
 """Client Oracle's Elixir : les matchs pro de la saison, un fichier par an."""
 
 import hashlib
-import os
 import re
 from datetime import date
 
 from google.auth.transport.requests import AuthorizedSession
 from google.cloud import bigquery, storage
-from google.oauth2 import service_account
 
+from identite import google_credentials
 from landing import upload_to_gcs
 from oe_columns import OE_COLUMNS
 
@@ -16,7 +15,6 @@ DRIVE_FOLDER_ID = "1gLSw0RLjBbtaNy0dgnGQDAZOHIgCe-HH"
 DRIVE_FILES_URL = "https://www.googleapis.com/drive/v3/files"
 TIMEOUT_S = 30
 OE_TABLE = "lol-meta-pipeline.lol_raw.oe_matches"
-CLE_COMPTE_DE_SERVICE = os.environ.get("LOL_SA_KEY", "secrets/lol-pipeline-key.json")
 SCOPES = [
     "https://www.googleapis.com/auth/drive.readonly",
     "https://www.googleapis.com/auth/cloud-platform",
@@ -122,9 +120,8 @@ def load_season_file(annee: int, session, storage_client, bq_client) -> int:
 
 
 if __name__ == "__main__":
-    identite = service_account.Credentials.from_service_account_file(
-        CLE_COMPTE_DE_SERVICE, scopes=SCOPES
-    )
+    # Le fichier cle sur le PC, l'identite fournie par Google dans le cloud.
+    identite = google_credentials(SCOPES)
     chargees = load_season_file(
         date.today().year,
         AuthorizedSession(identite),

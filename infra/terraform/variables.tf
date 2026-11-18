@@ -20,6 +20,36 @@ variable "landing_retention_days" {
   default     = 30
 }
 
+# true depuis le 18/11/2026 (image deposee, cle dans le coffre) : le code decrit
+# ce qui existe. Sur un projet neuf, lancer d'abord avec
+# -var deployer_le_job=false (le job ne peut pas naitre sans image ni cle).
+variable "deployer_le_job" {
+  description = "Deuxieme temps de job.tf : creer le job et le reveil. A passer a true seulement quand l'image est sur l'etagere et la cle Riot dans le coffre."
+  type        = bool
+  default     = true
+}
+
+# false depuis la bascule du 18/11/2026 : le DAG lol_daily du PC a ete mis en
+# pause AVANT, pour qu'il n'y ait jamais deux collectes en meme temps.
+variable "reveil_en_pause" {
+  description = "Le reveil du job quotidien reste en pause tant que la bascule n'est pas faite (jamais deux collectes en meme temps)."
+  type        = bool
+  default     = false
+}
+
+# Pas de valeur par defaut : une adresse personnelle n'a rien a faire dans le
+# code. Elle est dans terraform.tfvars, ignore par git.
+variable "alerte_courriel" {
+  description = "Adresse qui recoit le courriel quand le run quotidien echoue (alerte.tf)."
+  type        = string
+}
+
+variable "job_image_tag" {
+  description = "La version de l'image du job a lancer (etiquette sur l'etagere lol-job)."
+  type        = string
+  default     = "1"
+}
+
 variable "ladder_retention_days" {
   description = "Fenetre glissante des evenements de ladder dans BigQuery. Un patch dure environ deux semaines."
   type        = number

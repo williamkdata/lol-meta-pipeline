@@ -1,0 +1,28 @@
+# Ce qui n'entre JAMAIS dans l'image du job (job/Dockerfile).
+
+# Secrets : la cle Riot (.env) et la cle du compte de service (secrets/). Dans
+# le cloud, la cle Riot arrive au moment du run depuis Secret Manager, et
+# l'identite Google est pretee par Cloud Run : aucun fichier secret.
+.env
+secrets/
+
+# Local : environnement Python, git, caches.
+.venv/
+.git/
+**/__pycache__/
+.pytest_cache/
+.ruff_cache/
+
+# Ce dont le job n'a pas besoin.
+airflow/
+data/
+infra/
+prototypes/
+simulateur/
+tests/
+
+# Artefacts dbt du PC (l'image refait les siens).
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+dbt/profiles/.user.yml

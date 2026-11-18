@@ -80,3 +80,26 @@ unit_tests:
       rows:
         - {item_id: 3003, is_completed: true}
         - {item_id: 323003, is_completed: false}
+
+  # L'apercu du PBE (18/11/2026) : Data Dragon ne publie un patch qu'a sa
+  # sortie. En mode apercu, le DERNIER patch publie est recopie sous le nom du
+  # patch du PBE (lu dans la table des formules du PBE). Le dernier par NUMERO :
+  # en texte, '16.9' passerait apres '16.23'. La version garde sa valeur
+  # d'origine (16.23.1) : on voit que c'est un emprunt.
+  - name: items_borrow_the_last_published_patch_for_the_pbe_preview
+    model: stg_ddragon__items
+    overrides:
+      vars: {pbe_preview: true}
+    given:
+      - input: source('lol_raw', 'ddragon_items')
+        rows:
+          - {patch: '16.9', version: '16.9.1', item_id: 3071, item_name: Black Cleaver, gold_total: 3000}
+          - {patch: '16.23', version: '16.23.1', item_id: 3071, item_name: Black Cleaver, gold_total: 3000}
+      - input: source('lol_raw', 'pbe_kit_formula_parts')
+        rows:
+          - {patch: '16.24'}
+    expect:
+      rows:
+        - {patch_key: 1609, version: '16.9.1', item_id: 3071}
+        - {patch_key: 1623, version: '16.23.1', item_id: 3071}
+        - {patch_key: 1624, version: '16.23.1', item_id: 3071}

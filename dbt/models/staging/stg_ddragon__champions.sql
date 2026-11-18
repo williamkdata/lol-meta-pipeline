@@ -15,7 +15,7 @@ SELECT
     title,
     tags
 
-FROM {{ source('lol_raw', 'ddragon_champions') }}
+FROM {{ source_avec_apercu_pbe('ddragon_champions') }}
 
 -- Les 60 entrees speciales du patch 16.15 (Jade_Ahri, Jade_Wukong...) ont un
 -- _ dans leur code ; aucun vrai champion n'en a. STRPOS cherche le caractere

@@ -10,4 +10,4 @@ SELECT
     stat,
     value
 
-FROM {{ source('lol_raw', 'item_stats') }}
+FROM {{ source_avec_apercu_pbe('item_stats', 'pbe_item_stats') }}

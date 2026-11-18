@@ -24,5 +24,5 @@ SELECT
     end_value,
     modified_calc
 
-FROM {{ source('lol_raw', 'kit_formula_parts') }}
+FROM {{ source_avec_apercu_pbe('kit_formula_parts', 'pbe_kit_formula_parts') }}
 WHERE STRPOS(champion_code, '_') = 0

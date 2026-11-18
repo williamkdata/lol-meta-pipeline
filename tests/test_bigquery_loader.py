@@ -73,6 +73,18 @@ def test_load_rows_refuses_a_count_mismatch():
         load_rows(ROWS, TABLE, SCHEMA, client)
 
 
+def test_load_rows_can_replace_the_table_when_asked():
+    """L'apercu du PBE (18/11/2026) : une seule version a la fois. Ajouter
+    melangerait deux etats du PBE a quelques jours d'ecart. Seulement sur
+    demande : le defaut reste l'ajout (test ci-dessus)."""
+    client = FakeBigQuery()
+
+    load_rows(ROWS, TABLE, SCHEMA, client, remplacer=True)
+
+    [(_, _, config)] = client.appels
+    assert config.write_disposition == bigquery.WriteDisposition.WRITE_TRUNCATE
+
+
 def test_load_rows_does_nothing_without_rows():
     """Aucune ligne : aucun chargement lance, inutile de deranger BigQuery."""
     client = FakeBigQuery()

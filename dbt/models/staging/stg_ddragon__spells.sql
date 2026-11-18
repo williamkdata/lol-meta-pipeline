@@ -17,7 +17,7 @@ SELECT
     cooldown,
     cost
 
-FROM {{ source('lol_raw', 'ddragon_spells') }}
+FROM {{ source_avec_apercu_pbe('ddragon_spells') }}
 WHERE STRPOS(champion_code, '_') = 0
 
 -- Meme dedoublonnage que les champions : une ligne par patch et par rang.

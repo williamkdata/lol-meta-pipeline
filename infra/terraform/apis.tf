@@ -14,6 +14,14 @@ resource "google_project_service" "apis" {
     # signale un quota depasse par un vrai statut d'erreur, la ou le
     # telechargement anonyme renvoyait une page web avec un statut 200.
     "drive.googleapis.com",
+    # Le run quotidien dans le cloud (job.tf, 18/11/2026) : le job, son
+    # reveil, l'etagere d'images et le coffre de la cle Riot.
+    "run.googleapis.com",
+    "cloudscheduler.googleapis.com",
+    "artifactregistry.googleapis.com",
+    "secretmanager.googleapis.com",
+    # L'alerte du run quotidien (alerte.tf, 18/11/2026).
+    "monitoring.googleapis.com",
   ])
 
   service = each.value

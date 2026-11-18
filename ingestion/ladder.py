@@ -5,16 +5,15 @@ import argparse
 import json
 import logging
 import math
-import os
 import time
 from datetime import UTC, datetime
 
 import requests
 from google.api_core.exceptions import NotFound
 from google.cloud import bigquery, storage
-from google.oauth2 import service_account
 
 from bigquery_loader import load_rows
+from identite import google_credentials
 from landing import upload_to_gcs
 from riot import (
     PLATEFORME,
@@ -28,8 +27,6 @@ from riot import (
 )
 
 journal = logging.getLogger(__name__)
-
-CLE_COMPTE_DE_SERVICE = os.environ.get("LOL_SA_KEY", "secrets/lol-pipeline-key.json")
 
 # Une timeline pese plusieurs centaines de Ko : 50 parties a la fois tiennent
 # en memoire, 1 000 non. Chaque lot est depose puis charge avant le suivant.
@@ -418,10 +415,8 @@ if __name__ == "__main__":
     options.add_argument("--max-parties", type=int, default=800)
     reglages = options.parse_args()
 
-    identite = service_account.Credentials.from_service_account_file(
-        CLE_COMPTE_DE_SERVICE,
-        scopes=["https://www.googleapis.com/auth/cloud-platform"],
-    )
+    # Le fichier cle sur le PC, l'identite fournie par Google dans le cloud.
+    identite = google_credentials(["https://www.googleapis.com/auth/cloud-platform"])
     # Le journal : l'heure, le niveau, le module, le message. Airflow le range
     # dans le journal de la tache, lisible PENDANT le run.
     logging.basicConfig(
