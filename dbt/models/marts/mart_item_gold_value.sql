@@ -65,8 +65,12 @@ usage_des_ratios AS (
 ),
 
 ratios AS (
+    -- La valeur degats seulement (19/11/2026) : le plus gros ratio sert
+    -- d'etalon, et un bouclier a ratio d'AP ne doit pas faire d'un combattant
+    -- un acheteur d'objets AP.
     SELECT patch_key, champion_id, item_stat AS stat, SUM(total_coefficient) AS coefficient
     FROM {{ ref('mart_champion_stat_profile') }}
+    WHERE value_kind = 'degats'
     GROUP BY patch_key, champion_id, item_stat
 ),
 

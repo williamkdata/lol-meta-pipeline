@@ -134,6 +134,9 @@ SELECT
     p.predicted_direction,
     p.theory_change_pct,
     p.concerned_champions,
+    -- La valeur qui portait la prediction (degats ou survie, 19/11/2026) :
+    -- pour juger les predictions « survie » a part.
+    p.value_kind,
     t.old_population,
     t.old_hits,
     t.old_hit_wins,

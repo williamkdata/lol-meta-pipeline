@@ -6,20 +6,28 @@
 -- champion et l'ecart avec le patch precedent (un ratio buffe -> les objets de
 -- cette stat gagnent en valeur).
 --
--- Approximation assumee (version A) : passifs des objets ignores, degats,
--- boucliers et soins additionnes, temps de recharge ignores.
+-- Deux valeurs par objet et par champion (19/11/2026), une par profil :
+-- value_kind = 'degats' ou 'survie' (boucliers, soins, vitesse). Jamais
+-- additionnees : chacune a son classement et son ecart avec le patch precedent.
+-- Le « top 5 » d'un champion se lit dans les degats ; la survie dit quels
+-- objets nourrissent ses boucliers et ses soins (Galio, Annie avec Tibbers).
+--
+-- Approximation assumee (version A) : passifs des objets ignores, temps de
+-- recharge ignores.
 
 WITH profil AS (
-    -- Un coefficient par champion et par stat d'objet (total et bonus reunis :
-    -- un objet donne des stats bonus, qui comptent aussi dans le total).
+    -- Un coefficient par champion, par profil et par stat d'objet (total et
+    -- bonus reunis : un objet donne des stats bonus, qui comptent aussi dans le
+    -- total).
     SELECT
         patch_key,
         champion_id,
         champion_code,
+        value_kind,
         item_stat,
         SUM(total_coefficient) AS coefficient
     FROM {{ ref('mart_champion_stat_profile') }}
-    GROUP BY patch_key, champion_id, champion_code, item_stat
+    GROUP BY patch_key, champion_id, champion_code, value_kind, item_stat
 ),
 
 objets AS (
@@ -41,6 +49,7 @@ valeurs AS (
         p.patch_key,
         p.champion_id,
         p.champion_code,
+        p.value_kind,
         o.item_id,
         o.item_name,
         o.gold_total,
@@ -48,27 +57,33 @@ valeurs AS (
     FROM profil AS p
     INNER JOIN objets AS o
         ON p.patch_key = o.patch_key AND p.item_stat = o.stat
-    GROUP BY p.patch_key, p.champion_id, p.champion_code, o.item_id, o.item_name, o.gold_total
+    GROUP BY
+        p.patch_key, p.champion_id, p.champion_code, p.value_kind,
+        o.item_id, o.item_name, o.gold_total
 )
 
 SELECT
     patch_key,
     champion_id,
     champion_code,
+    value_kind,
     item_id,
     item_name,
     gold_total,
     ROUND(theory_value, 2) AS theory_value,
     ROUND(SAFE_DIVIDE(theory_value, gold_total) * 1000, 2) AS theory_value_per_1000_gold,
-    -- Le rang de l'objet pour ce champion (1 = le plus rentable).
+    -- Le rang de l'objet pour ce champion, dans cette valeur (1 = le plus rentable).
     RANK() OVER (
-        PARTITION BY patch_key, champion_id
+        PARTITION BY patch_key, champion_id, value_kind
         ORDER BY SAFE_DIVIDE(theory_value, gold_total) DESC
     ) AS rank_for_champion,
-    -- L'ecart avec le patch precedent : ce qu'un patch change pour cet objet.
+    -- L'ecart avec le patch precedent, dans la meme valeur : ce qu'un patch
+    -- change pour cet objet.
     ROUND(
         theory_value
-        - LAG(theory_value) OVER (PARTITION BY champion_id, item_id ORDER BY patch_key),
+        - LAG(theory_value) OVER (
+            PARTITION BY champion_id, item_id, value_kind ORDER BY patch_key
+        ),
         2
     ) AS change_vs_previous_patch
 FROM valeurs

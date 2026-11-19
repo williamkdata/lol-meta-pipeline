@@ -75,7 +75,10 @@ def objets_du_champion(champion: str, patch: str) -> dict:
     )
     base = (
         f"FROM `lol-meta-pipeline.{DATASET}.mart_item_theory_value` "
-        "WHERE LOWER(champion_code) = LOWER(@champion) AND patch_key = @patch"
+        "WHERE LOWER(champion_code) = LOWER(@champion) AND patch_key = @patch "
+        # Deux valeurs par objet depuis le 19/11/2026 : le top des objets se
+        # lit dans les degats (la survie a son propre classement).
+        "AND value_kind = 'degats'"
     )
     meilleurs = (
         "SELECT item_name AS objet, rank_for_champion AS rang, "

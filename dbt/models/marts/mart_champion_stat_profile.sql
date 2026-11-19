@@ -24,6 +24,13 @@
 -- vingtaine de champions (Gnar, Jayce...). Mesure du 19/11 au 16.23 : 151 tops
 -- 5 sur 173 inchanges ; corrige Annie (les PV de Tibbers en faisaient une
 -- acheteuse d'objets PV), Mordekaiser, Maitre Yi, Gangplank, K'Sante.
+--
+-- Puis la valeur survie SEPAREE (19/11/2026) : ces ratios ne sont plus jetes,
+-- ils forment un second profil. value_kind = 'degats' (tout le reste, y compris
+-- les formules sans infobulle) ou 'survie'. Les trois premieres regles
+-- s'appliquent a chaque profil separement. Sans la survie, un changement qui ne
+-- touche qu'elle (bouclier de Galio, PV de Tibbers) n'etait plus predit : 6
+-- champions perdus depuis le 16.19 (Fiora, Vi, Diana, Viktor, Annie, Galio).
 
 WITH rangs_max AS (
     SELECT patch_key, champion_id, slot, MAX(max_rank) AS max_rank
@@ -52,6 +59,8 @@ ratios AS (
         p.slot,
         p.stat,
         p.stat_formula,
+        -- Une formule de survie (trouvee dans la liste) va dans le profil survie.
+        IF(s.name IS NULL, 'degats', 'survie') AS value_kind,
         -- Ratio fixe (StatByCoefficient) ou ratio par rang (StatByNamedDataValue).
         COALESCE(p.coefficient, v.value) AS coefficient
     FROM {{ ref('stg_kit__parts') }} AS p
@@ -72,16 +81,16 @@ ratios AS (
     WHERE p.part_type IN (
         'StatByCoefficientCalculationPart', 'StatByNamedDataValueCalculationPart'
     )
-        AND s.name IS NULL
 ),
 
 ratios_distincts AS (
     -- Une seule fois chaque ratio identique d'un meme sort, quel que soit le
-    -- nom de la formule qui le porte.
+    -- nom de la formule qui le porte, dans chaque profil.
     SELECT DISTINCT
         patch_key,
         champion_id,
         champion_code,
+        value_kind,
         slot,
         stat,
         stat_formula,
@@ -93,12 +102,17 @@ SELECT
     r.patch_key,
     r.champion_id,
     r.champion_code,
+    r.value_kind,
     c.stat_label,
     c.item_stat,
     COUNT(*) AS ratios,
+    -- L'arrondi n'est pas cosmetique : une somme de nombres a virgule depend
+    -- de l'ordre des additions (1,7999999 ou 1,8000001). Sans lui, la valeur
+    -- survie de Locke bougeait de 0,01 d'un patch a l'autre sans rien changer
+    -- (mesure du 19/11) : une fausse prediction.
     ROUND(SUM(r.coefficient), 4) AS total_coefficient
 FROM ratios_distincts AS r
 INNER JOIN {{ ref('stat_codes') }} AS c
     ON r.stat = c.stat AND r.stat_formula = c.stat_formula
 WHERE ABS(r.coefficient) >= 0.01
-GROUP BY r.patch_key, r.champion_id, r.champion_code, c.stat_label, c.item_stat
+GROUP BY r.patch_key, r.champion_id, r.champion_code, r.value_kind, c.stat_label, c.item_stat

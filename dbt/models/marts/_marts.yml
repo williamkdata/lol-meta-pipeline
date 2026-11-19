@@ -217,8 +217,16 @@ models:
       ecart moyen en %. Les deux causes sont separees : un champion dont le
       kit a change est ecarte des concernes d'un objet change.
       concerned_champion_ids = les champions pour qui l'objet change de valeur
-      (pour un champion : lui-meme).
+      (pour un champion : lui-meme). value_kind (19/11/2026) = la valeur qui
+      porte la prediction : degats, ou survie pour un champion dont seuls les
+      boucliers, soins ou vitesses changent ; toujours degats pour un objet.
     columns:
+      - name: value_kind
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [degats, survie]
       - name: subject_type
         data_tests:
           - not_null
@@ -251,7 +259,8 @@ models:
       quand l'objet est achete, ou du champion. share_verdict et win_verdict
       (macro patch_verdict) : confirme, meme_sens, sens_contraire, contredit,
       stable, sans_donnees ; « confirme » et « contredit » exigent des
-      fourchettes de Wilson separees.
+      fourchettes de Wilson separees. value_kind = la valeur qui portait la
+      prediction (degats ou survie).
     columns:
       - name: share_verdict
         data_tests:
@@ -399,23 +408,42 @@ models:
   - name: mart_champion_stat_profile
     description: >
       Profil de sensibilite de chaque champion par patch : somme de ses ratios
-      par stat (formules Tooltip et ratios sous 0,01 ecartes, ratios par rang au
-      rang max). Version A du moteur theorique.
+      par stat (ratios identiques d'un meme sort comptes une fois, ratios sous
+      0,01 ecartes, ratios par rang au rang max). Version A du moteur
+      theorique. Deux profils par champion (19/11/2026) : value_kind =
+      degats, ou survie (formules que l'infobulle designe clairement comme
+      bouclier, soin ou vitesse, et jamais comme degats).
+    columns:
+      - name: value_kind
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [degats, survie]
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
-            combination_of_columns: [patch_key, champion_id, stat_label]
+            combination_of_columns: [patch_key, champion_id, value_kind, stat_label]
 
   - name: mart_item_theory_value
     description: >
       Valeur theorique de chaque objet termine pour chaque champion par patch :
       stats de l'objet x profil du champion, pour 1 000 pieces d'or, rang de
       l'objet pour le champion, ecart avec le patch precedent. Approximation
-      (passifs des objets ignores).
+      (passifs des objets ignores). Deux valeurs jamais additionnees
+      (19/11/2026) : value_kind = degats ou survie, chacune avec son rang et
+      son ecart.
+    columns:
+      - name: value_kind
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [degats, survie]
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
-            combination_of_columns: [patch_key, champion_id, item_id]
+            combination_of_columns: [patch_key, champion_id, value_kind, item_id]
 
 unit_tests:
   # Le calcul de la fourchette, fige sur un cas verifie a la main : Ahri mid,
@@ -613,28 +641,71 @@ unit_tests:
         - {calc_name: TotalDamage, part_path: "mFormulaParts.1", change_kind: renomme,
            renamed_counterpart: TotalDamageTooltip}
 
-  # Un champion dont les ratios d'attaque bonus font 1,5 + 0,2, et le Couperet
-  # noir (45 d'attaque, 400 PV, 3 000 po) : 1,7 x 45 = 76,5, soit 25,5 pour
-  # 1 000 po. Les PV ne comptent pas : le profil n'en a pas.
+  # Deux valeurs separees (19/11/2026), sur un champion inspire d'Ambessa :
+  # degats = son passif (0,2 de l'attaque bonus) ; survie = le bouclier de son
+  # W (1,5 de l'attaque bonus au 16.22, 1,2 au 16.21) et 0,1 des PV bonus.
+  # Couperet noir (45 d'attaque, 400 PV, 3 000 po), Danse de la mort (60
+  # d'attaque, 50 d'armure, 3 300 po). Au 16.22 :
+  #   degats : Couperet 0,2 x 45 = 9 (3,0 pour 1 000 po), Danse 12 (3,64) ->
+  #     la Danse est 1re ;
+  #   survie : Couperet 1,5 x 45 + 0,1 x 400 = 107,5 (35,83), Danse 90 (27,27)
+  #     -> le Couperet est 1er. Chaque valeur a son propre classement ;
+  #   ecart avec le 16.21 : 0 en degats ; en survie, +0,3 x 45 = 13,5 et
+  #     +0,3 x 60 = 18. Melanges, les profils donneraient 1,7 x 45 + 40 = 116,5.
+  # L'armure et l'acceleration ne comptent pas : aucun profil n'en a.
   - name: item_theory_value_multiplies_item_stats_by_the_profile
     model: mart_item_theory_value
     given:
       - input: ref('mart_champion_stat_profile')
         rows:
-          - {patch_key: 1622, champion_id: 799, champion_code: Ambessa,
-             stat_label: attaque bonus, item_stat: FlatPhysicalDamageMod, total_coefficient: 1.7}
+          - {patch_key: 1621, champion_id: 799, champion_code: Ambessa, value_kind: degats,
+             stat_label: attaque bonus, item_stat: FlatPhysicalDamageMod, total_coefficient: 0.2}
+          - {patch_key: 1621, champion_id: 799, champion_code: Ambessa, value_kind: survie,
+             stat_label: attaque bonus, item_stat: FlatPhysicalDamageMod, total_coefficient: 1.2}
+          - {patch_key: 1621, champion_id: 799, champion_code: Ambessa, value_kind: survie,
+             stat_label: PV bonus, item_stat: FlatHPPoolMod, total_coefficient: 0.1}
+          - {patch_key: 1622, champion_id: 799, champion_code: Ambessa, value_kind: degats,
+             stat_label: attaque bonus, item_stat: FlatPhysicalDamageMod, total_coefficient: 0.2}
+          - {patch_key: 1622, champion_id: 799, champion_code: Ambessa, value_kind: survie,
+             stat_label: attaque bonus, item_stat: FlatPhysicalDamageMod, total_coefficient: 1.5}
+          - {patch_key: 1622, champion_id: 799, champion_code: Ambessa, value_kind: survie,
+             stat_label: PV bonus, item_stat: FlatHPPoolMod, total_coefficient: 0.1}
       - input: ref('stg_ddragon__items')
         rows:
+          - {patch_key: 1621, item_id: 3071, item_name: Black Cleaver, gold_total: 3000, is_completed: true}
+          - {patch_key: 1621, item_id: 6333, item_name: "Death's Dance", gold_total: 3300, is_completed: true}
           - {patch_key: 1622, item_id: 3071, item_name: Black Cleaver, gold_total: 3000, is_completed: true}
+          - {patch_key: 1622, item_id: 6333, item_name: "Death's Dance", gold_total: 3300, is_completed: true}
       - input: ref('stg_item_stats')
         rows:
+          - {patch_key: 1621, item_id: 3071, stat: FlatPhysicalDamageMod, value: 45.0}
+          - {patch_key: 1621, item_id: 3071, stat: FlatHPPoolMod, value: 400.0}
+          - {patch_key: 1621, item_id: 3071, stat: AbilityHasteMod, value: 20.0}
+          - {patch_key: 1621, item_id: 6333, stat: FlatPhysicalDamageMod, value: 60.0}
+          - {patch_key: 1621, item_id: 6333, stat: FlatArmorMod, value: 50.0}
           - {patch_key: 1622, item_id: 3071, stat: FlatPhysicalDamageMod, value: 45.0}
           - {patch_key: 1622, item_id: 3071, stat: FlatHPPoolMod, value: 400.0}
           - {patch_key: 1622, item_id: 3071, stat: AbilityHasteMod, value: 20.0}
+          - {patch_key: 1622, item_id: 6333, stat: FlatPhysicalDamageMod, value: 60.0}
+          - {patch_key: 1622, item_id: 6333, stat: FlatArmorMod, value: 50.0}
     expect:
       rows:
-        - {patch_key: 1622, champion_id: 799, item_id: 3071, theory_value: 76.5,
-           theory_value_per_1000_gold: 25.5, rank_for_champion: 1}
+        - {patch_key: 1621, value_kind: degats, item_id: 3071, theory_value: 9.0,
+           theory_value_per_1000_gold: 3.0, rank_for_champion: 2, change_vs_previous_patch: null}
+        - {patch_key: 1621, value_kind: degats, item_id: 6333, theory_value: 12.0,
+           theory_value_per_1000_gold: 3.64, rank_for_champion: 1, change_vs_previous_patch: null}
+        - {patch_key: 1621, value_kind: survie, item_id: 3071, theory_value: 94.0,
+           theory_value_per_1000_gold: 31.33, rank_for_champion: 1, change_vs_previous_patch: null}
+        - {patch_key: 1621, value_kind: survie, item_id: 6333, theory_value: 72.0,
+           theory_value_per_1000_gold: 21.82, rank_for_champion: 2, change_vs_previous_patch: null}
+        - {patch_key: 1622, value_kind: degats, item_id: 3071, theory_value: 9.0,
+           theory_value_per_1000_gold: 3.0, rank_for_champion: 2, change_vs_previous_patch: 0.0}
+        - {patch_key: 1622, value_kind: degats, item_id: 6333, theory_value: 12.0,
+           theory_value_per_1000_gold: 3.64, rank_for_champion: 1, change_vs_previous_patch: 0.0}
+        - {patch_key: 1622, value_kind: survie, item_id: 3071, theory_value: 107.5,
+           theory_value_per_1000_gold: 35.83, rank_for_champion: 1, change_vs_previous_patch: 13.5}
+        - {patch_key: 1622, value_kind: survie, item_id: 6333, theory_value: 90.0,
+           theory_value_per_1000_gold: 27.27, rank_for_champion: 2, change_vs_previous_patch: 18.0}
 
   # La fidelite des builds sur deux patches. Au 16.22, trois joueurs :
   #   p1 : Infinity Edge, Collector, Lord Dominik (rangs 1 a 3), tous dans
@@ -750,22 +821,22 @@ unit_tests:
     given:
       - input: ref('mart_item_theory_value')
         rows:
-          - {patch_key: 1621, champion_id: 266, item_id: 2501, theory_value_per_1000_gold: 10.0}
-          - {patch_key: 1622, champion_id: 266, item_id: 2501, theory_value_per_1000_gold: 13.0}
-          - {patch_key: 1621, champion_id: 266, item_id: 6676, theory_value_per_1000_gold: 9.0}
-          - {patch_key: 1622, champion_id: 266, item_id: 6676, theory_value_per_1000_gold: 8.7}
-          - {patch_key: 1621, champion_id: 266, item_id: 3071, theory_value_per_1000_gold: 8.0}
-          - {patch_key: 1622, champion_id: 266, item_id: 3071, theory_value_per_1000_gold: 8.0}
-          - {patch_key: 1621, champion_id: 103, item_id: 2501, theory_value_per_1000_gold: 5.0}
-          - {patch_key: 1622, champion_id: 103, item_id: 2501, theory_value_per_1000_gold: 5.0}
-          - {patch_key: 1621, champion_id: 157, item_id: 2501, theory_value_per_1000_gold: 10.0}
-          - {patch_key: 1622, champion_id: 157, item_id: 2501, theory_value_per_1000_gold: 13.0}
-          - {patch_key: 1621, champion_id: 157, item_id: 3031, theory_value_per_1000_gold: 10.0}
-          - {patch_key: 1622, champion_id: 157, item_id: 3031, theory_value_per_1000_gold: 9.0}
-          - {patch_key: 1621, champion_id: 136, item_id: 3089, theory_value_per_1000_gold: 20.0}
-          - {patch_key: 1622, champion_id: 136, item_id: 3089, theory_value_per_1000_gold: 22.0}
-          - {patch_key: 1621, champion_id: 136, item_id: 3157, theory_value_per_1000_gold: 10.0}
-          - {patch_key: 1622, champion_id: 136, item_id: 3157, theory_value_per_1000_gold: 11.0}
+          - {patch_key: 1621, champion_id: 266, value_kind: degats, item_id: 2501, theory_value_per_1000_gold: 10.0}
+          - {patch_key: 1622, champion_id: 266, value_kind: degats, item_id: 2501, theory_value_per_1000_gold: 13.0}
+          - {patch_key: 1621, champion_id: 266, value_kind: degats, item_id: 6676, theory_value_per_1000_gold: 9.0}
+          - {patch_key: 1622, champion_id: 266, value_kind: degats, item_id: 6676, theory_value_per_1000_gold: 8.7}
+          - {patch_key: 1621, champion_id: 266, value_kind: degats, item_id: 3071, theory_value_per_1000_gold: 8.0}
+          - {patch_key: 1622, champion_id: 266, value_kind: degats, item_id: 3071, theory_value_per_1000_gold: 8.0}
+          - {patch_key: 1621, champion_id: 103, value_kind: degats, item_id: 2501, theory_value_per_1000_gold: 5.0}
+          - {patch_key: 1622, champion_id: 103, value_kind: degats, item_id: 2501, theory_value_per_1000_gold: 5.0}
+          - {patch_key: 1621, champion_id: 157, value_kind: degats, item_id: 2501, theory_value_per_1000_gold: 10.0}
+          - {patch_key: 1622, champion_id: 157, value_kind: degats, item_id: 2501, theory_value_per_1000_gold: 13.0}
+          - {patch_key: 1621, champion_id: 157, value_kind: degats, item_id: 3031, theory_value_per_1000_gold: 10.0}
+          - {patch_key: 1622, champion_id: 157, value_kind: degats, item_id: 3031, theory_value_per_1000_gold: 9.0}
+          - {patch_key: 1621, champion_id: 136, value_kind: degats, item_id: 3089, theory_value_per_1000_gold: 20.0}
+          - {patch_key: 1622, champion_id: 136, value_kind: degats, item_id: 3089, theory_value_per_1000_gold: 22.0}
+          - {patch_key: 1621, champion_id: 136, value_kind: degats, item_id: 3157, theory_value_per_1000_gold: 10.0}
+          - {patch_key: 1622, champion_id: 136, value_kind: degats, item_id: 3157, theory_value_per_1000_gold: 11.0}
       - input: ref('stg_item_stats')
         rows:
           - {patch_key: 1621, item_id: 2501, stat: FlatPhysicalDamageMod, value: 30.0}
@@ -790,16 +861,75 @@ unit_tests:
       rows:
         - {patch_key: 1622, previous_patch_key: 1621, subject_type: objet, subject_id: 2501,
            subject_name: "Overlord's Bloodmail", predicted_direction: hausse,
-           theory_change_pct: 30.0, concerned_champions: 1}
+           theory_change_pct: 30.0, concerned_champions: 1, value_kind: degats}
         - {patch_key: 1622, previous_patch_key: 1621, subject_type: objet, subject_id: 6676,
            subject_name: "The Collector", predicted_direction: baisse,
-           theory_change_pct: -3.3, concerned_champions: 1}
+           theory_change_pct: -3.3, concerned_champions: 1, value_kind: degats}
         - {patch_key: 1622, previous_patch_key: 1621, subject_type: champion, subject_id: 136,
            subject_name: "Aurelion Sol", predicted_direction: hausse,
-           theory_change_pct: 10.0, concerned_champions: 1}
+           theory_change_pct: 10.0, concerned_champions: 1, value_kind: degats}
         - {patch_key: 1622, previous_patch_key: 1621, subject_type: champion, subject_id: 157,
            subject_name: Yasuo, predicted_direction: baisse,
-           theory_change_pct: -10.0, concerned_champions: 1}
+           theory_change_pct: -10.0, concerned_champions: 1, value_kind: degats}
+
+  # La valeur survie dans les predictions (19/11/2026), 16.22 contre 16.21.
+  # Un objet change (Bloodmail 2501, AD 30 -> 40) et un objet inchange
+  # (Zhonya 3157, meme stats, meme prix) :
+  #   - Galio (3) : seule sa SURVIE bouge sur Zhonya (10 -> 15, +50 %) -> le
+  #     kit a change, predit par la survie (hausse, +50 %). Il a aussi un
+  #     ecart degats sur Bloodmail : il en est ECARTE (son kit a change, la
+  #     cause serait melangee) ;
+  #   - Mel (800) : ses degats (10 -> 9, -10 %) ET sa survie (10 -> 7, -30 %)
+  #     bougent sur Zhonya -> les degats passent d'abord : -10 %, pas -20 % ;
+  #   - Aatrox (266) : degats sur Bloodmail 10 -> 13 (+30 %), survie 5 -> 10
+  #     (+100 %). Pour un objet, seuls les degats comptent : +30 %, Aatrox
+  #     compte une fois.
+  - name: patch_predictions_use_survival_when_only_survival_moves
+    model: mart_patch_predictions
+    given:
+      - input: ref('mart_item_theory_value')
+        rows:
+          - {patch_key: 1621, champion_id: 3, value_kind: degats, item_id: 3157, theory_value_per_1000_gold: 20.0}
+          - {patch_key: 1622, champion_id: 3, value_kind: degats, item_id: 3157, theory_value_per_1000_gold: 20.0}
+          - {patch_key: 1621, champion_id: 3, value_kind: survie, item_id: 3157, theory_value_per_1000_gold: 10.0}
+          - {patch_key: 1622, champion_id: 3, value_kind: survie, item_id: 3157, theory_value_per_1000_gold: 15.0}
+          - {patch_key: 1621, champion_id: 3, value_kind: degats, item_id: 2501, theory_value_per_1000_gold: 10.0}
+          - {patch_key: 1622, champion_id: 3, value_kind: degats, item_id: 2501, theory_value_per_1000_gold: 13.0}
+          - {patch_key: 1621, champion_id: 800, value_kind: degats, item_id: 3157, theory_value_per_1000_gold: 10.0}
+          - {patch_key: 1622, champion_id: 800, value_kind: degats, item_id: 3157, theory_value_per_1000_gold: 9.0}
+          - {patch_key: 1621, champion_id: 800, value_kind: survie, item_id: 3157, theory_value_per_1000_gold: 10.0}
+          - {patch_key: 1622, champion_id: 800, value_kind: survie, item_id: 3157, theory_value_per_1000_gold: 7.0}
+          - {patch_key: 1621, champion_id: 266, value_kind: degats, item_id: 2501, theory_value_per_1000_gold: 10.0}
+          - {patch_key: 1622, champion_id: 266, value_kind: degats, item_id: 2501, theory_value_per_1000_gold: 13.0}
+          - {patch_key: 1621, champion_id: 266, value_kind: survie, item_id: 2501, theory_value_per_1000_gold: 5.0}
+          - {patch_key: 1622, champion_id: 266, value_kind: survie, item_id: 2501, theory_value_per_1000_gold: 10.0}
+      - input: ref('stg_item_stats')
+        rows:
+          - {patch_key: 1621, item_id: 2501, stat: FlatPhysicalDamageMod, value: 30.0}
+          - {patch_key: 1622, item_id: 2501, stat: FlatPhysicalDamageMod, value: 40.0}
+          - {patch_key: 1621, item_id: 3157, stat: FlatMagicDamageMod, value: 105.0}
+          - {patch_key: 1622, item_id: 3157, stat: FlatMagicDamageMod, value: 105.0}
+      - input: ref('stg_ddragon__items')
+        rows:
+          - {patch_key: 1621, item_id: 2501, item_name: "Overlord's Bloodmail", gold_total: 3300, is_completed: true}
+          - {patch_key: 1622, item_id: 2501, item_name: "Overlord's Bloodmail", gold_total: 3300, is_completed: true}
+          - {patch_key: 1621, item_id: 3157, item_name: "Zhonya's Hourglass", gold_total: 3250, is_completed: true}
+          - {patch_key: 1622, item_id: 3157, item_name: "Zhonya's Hourglass", gold_total: 3250, is_completed: true}
+      - input: ref('stg_ddragon__champions')
+        rows:
+          - {patch_key: 1622, champion_id: 3, champion_name: Galio}
+          - {patch_key: 1622, champion_id: 800, champion_name: Mel}
+    expect:
+      rows:
+        - {patch_key: 1622, subject_type: objet, subject_id: 2501, subject_name: "Overlord's Bloodmail",
+           predicted_direction: hausse, theory_change_pct: 30.0, concerned_champions: 1,
+           value_kind: degats}
+        - {patch_key: 1622, subject_type: champion, subject_id: 3, subject_name: Galio,
+           predicted_direction: hausse, theory_change_pct: 50.0, concerned_champions: 1,
+           value_kind: survie}
+        - {patch_key: 1622, subject_type: champion, subject_id: 800, subject_name: Mel,
+           predicted_direction: baisse, theory_change_pct: -10.0, concerned_champions: 1,
+           value_kind: degats}
 
   # Les experiences de patch, 16.21 -> 16.22. Deux predictions testables et
   # une sans donnees de ladder :
@@ -823,9 +953,9 @@ unit_tests:
           SELECT 1622 AS patch_key, 1621 AS previous_patch_key, 'objet' AS subject_type,
             2501 AS subject_id, "Overlord's Bloodmail" AS subject_name,
             'hausse' AS predicted_direction, 30.0 AS theory_change_pct,
-            1 AS concerned_champions, [266] AS concerned_champion_ids
-          UNION ALL SELECT 1622, 1621, 'champion', 136, 'Aurelion Sol', 'hausse', 2.3, 1, [136]
-          UNION ALL SELECT 1601, 1524, 'champion', 999, 'Inconnu', 'baisse', -5.0, 1, [999]
+            1 AS concerned_champions, [266] AS concerned_champion_ids, 'degats' AS value_kind
+          UNION ALL SELECT 1622, 1621, 'champion', 136, 'Aurelion Sol', 'hausse', 2.3, 1, [136], 'survie'
+          UNION ALL SELECT 1601, 1524, 'champion', 999, 'Inconnu', 'baisse', -5.0, 1, [999], 'degats'
       - input: ref('stg_ladder__participants')
         format: sql
         rows: |
@@ -847,10 +977,12 @@ unit_tests:
           UNION ALL SELECT 'A21_1', 1, 2501, 4
     expect:
       rows:
-        - {subject_type: objet, subject_id: 2501, old_population: 10, old_hits: 0,
+        # value_kind recopie de la prediction (19/11/2026) : on peut juger les
+        # predictions « survie » a part.
+        - {subject_type: objet, subject_id: 2501, value_kind: degats, old_population: 10, old_hits: 0,
            new_population: 10, new_hits: 10, new_hit_wins: 6,
            share_verdict: confirme, win_verdict: sans_donnees}
-        - {subject_type: champion, subject_id: 136, old_population: 12, old_hits: 2,
+        - {subject_type: champion, subject_id: 136, value_kind: survie, old_population: 12, old_hits: 2,
            new_population: 11, new_hits: 1, new_hit_wins: 1,
            share_verdict: sens_contraire, win_verdict: meme_sens}
 
@@ -911,6 +1043,9 @@ unit_tests:
   # 2 500 / 2 500). Acceleration : Marksman 0,5 ; Mage 1 mais classe
   # secondaire -> 0,5 x 1 = 0,5. Utilite 0,5 -> rentabilite 0,5 (1,0 si la
   # classe secondaire comptait en entier).
+  # La survie ne compte pas (19/11/2026) : une ligne survie d'Ambessa a 10 d'AP
+  # ferait d'elle une acheteuse de Rabadon (AP 1) et diviserait par deux
+  # l'utilite de son AD (5 / 10). Seule la valeur degats sert d'etalon.
   - name: item_gold_value_useful_stats_by_class_and_ratios
     model: mart_item_gold_value
     given:
@@ -923,10 +1058,11 @@ unit_tests:
           UNION ALL SELECT 1621, 81, 'Ezreal', 'Ezreal', ['Marksman', 'Mage']
       - input: ref('mart_champion_stat_profile')
         rows:
-          - {patch_key: 1622, champion_id: 799, item_stat: FlatPhysicalDamageMod, total_coefficient: 5.0}
-          - {patch_key: 1622, champion_id: 54, item_stat: FlatMagicDamageMod, total_coefficient: 2.6}
-          - {patch_key: 1622, champion_id: 54, item_stat: FlatArmorMod, total_coefficient: 0.55}
-          - {patch_key: 1622, champion_id: 54, item_stat: FlatHPPoolMod, total_coefficient: 0.1}
+          - {patch_key: 1622, champion_id: 799, value_kind: degats, item_stat: FlatPhysicalDamageMod, total_coefficient: 5.0}
+          - {patch_key: 1622, champion_id: 799, value_kind: survie, item_stat: FlatMagicDamageMod, total_coefficient: 10.0}
+          - {patch_key: 1622, champion_id: 54, value_kind: degats, item_stat: FlatMagicDamageMod, total_coefficient: 2.6}
+          - {patch_key: 1622, champion_id: 54, value_kind: degats, item_stat: FlatArmorMod, total_coefficient: 0.55}
+          - {patch_key: 1622, champion_id: 54, value_kind: degats, item_stat: FlatHPPoolMod, total_coefficient: 0.1}
       - input: ref('stat_usefulness_by_class')
         rows:
           - {champion_class: Fighter, stat: FlatPhysicalDamageMod, usefulness: 0.5}
@@ -981,15 +1117,17 @@ unit_tests:
         - {champion_id: 54, item_id: 3031, useful_gold_efficiency: 0.0, rank_for_champion: 4}
         - {champion_id: 81, item_id: 9100, useful_gold_efficiency: 0.5, rank_for_champion: 1}
 
-  # « Sans la survie » (decision de William, 19/11/2026) : les ratios des
-  # formules que l'infobulle designe CLAIREMENT comme de la survie (bouclier,
-  # soin ou PV "healing", vitesse) ne comptent plus, sauf si la meme formule
-  # est aussi balisee degats. Une formule absente des infobulles (Gnar,
-  # Jayce...) reste comptee : retirer ce qu'on ne sait pas classer casserait
-  # une vingtaine de champions (mesure du 19/11, projet3_explications 9.83).
+  # Deux valeurs separees (19/11/2026). « Sans la survie » (decision de
+  # William) : les ratios des formules que l'infobulle designe CLAIREMENT comme
+  # de la survie (bouclier, soin ou PV "healing", vitesse) ne comptent plus
+  # dans la valeur degats, sauf si la meme formule est aussi balisee degats.
+  # Une formule absente des infobulles (Gnar, Jayce...) reste dans les degats :
+  # retirer ce qu'on ne sait pas classer casserait une vingtaine de champions
+  # (mesure du 19/11, projet3_explications 9.83). Puis « la valeur survie
+  # separee » : ces ratios ne sont plus jetes, ils forment la valeur survie.
   # Annie au 16.23 : les PV de Tibbers (+150 % des PV bonus) ne font plus
-  # d'elle une acheteuse d'objets PV.
-  - name: stat_profile_leaves_out_survival_formulas
+  # d'elle une acheteuse d'objets PV pour ses degats ; ils comptent pour sa survie.
+  - name: stat_profile_separates_damage_and_survival
     model: mart_champion_stat_profile
     given:
       - input: ref('stg_ddragon__spells')
@@ -1032,7 +1170,14 @@ unit_tests:
           - {stat: 12, stat_formula: 2, stat_label: PV bonus, item_stat: FlatHPPoolMod, statut: verifie}
     expect:
       rows:
-        # Q 0,75 + attaque de Tibbers 0,15 + drain 0,3 ; le bouclier (0,4) et la
-        # vitesse (0,2) sont retires.
-        - {patch_key: 1623, champion_id: 1, champion_code: Annie, stat_label: AP totale, ratios: 3, total_coefficient: 1.2}
-        - {patch_key: 1623, champion_id: 1, champion_code: Annie, stat_label: attaque totale, ratios: 1, total_coefficient: 0.5}
+        # Degats : Q 0,75 + attaque de Tibbers 0,15 + drain 0,3 ; la formule
+        # sans infobulle (0,5 d'attaque) reste comptee.
+        - {patch_key: 1623, champion_id: 1, champion_code: Annie, value_kind: degats,
+           stat_label: AP totale, ratios: 3, total_coefficient: 1.2}
+        - {patch_key: 1623, champion_id: 1, champion_code: Annie, value_kind: degats,
+           stat_label: attaque totale, ratios: 1, total_coefficient: 0.5}
+        # Survie : bouclier 0,4 + vitesse 0,2 ; les PV de Tibbers 1,5.
+        - {patch_key: 1623, champion_id: 1, champion_code: Annie, value_kind: survie,
+           stat_label: AP totale, ratios: 2, total_coefficient: 0.6}
+        - {patch_key: 1623, champion_id: 1, champion_code: Annie, value_kind: survie,
+           stat_label: PV bonus, ratios: 1, total_coefficient: 1.5}
