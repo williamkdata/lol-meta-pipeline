@@ -23,6 +23,24 @@ STATS_DES_CODES = {
     (1, 2): "armor_bonus",
     (6, 0): "mr",
     (6, 2): "mr_bonus",
+    # Decodes le 18/11/2026 : le nom des formules (ecrit par Riot) et les mots
+    # des infobulles, deux indices independants, puis la forme des calculs.
+    # Vitesse d'attaque BONUS, en fraction (0.5 = +50 %) : passif de Varus,
+    # 42 x ce code = 21 d'AD a +50 % (en %, 2 100 : absurde).
+    (4, 2): "as_bonus",
+    # Chances de critique (fraction) et degats critiques (multiplicateur total,
+    # 2.0 en general) : le Q de Sivir et le E de Garen multiplient leurs degats
+    # par 1 + X x (code 9 - 1), la forme exacte du critique en moyenne.
+    (8, 0): "crit_chance",
+    (9, 0): "crit_damage",
+    # Letalite : seul Pyke l'utilise ; son R s'appelle "RLethalityDamage".
+    (29, 0): "lethality",
+    # PAS encore relies (une erreur plutot qu'un faux nombre) :
+    #   (4, 0) vitesse d'attaque totale, probable, unite non verifiable ;
+    #   (7, x) vitesse de deplacement (DashSpeed x 6, Janna, Hecarim) : le
+    #          mannequin n'a pas cette stat ;
+    #   (9, 2) degats critiques bonus : le mannequin ne garde que le total ;
+    #   (10, 13, 14, 15, 16, 18, 31) : un ou deux exemples, sens incertain.
 }
 
 
@@ -33,6 +51,7 @@ def evaluate_formula(
     rang: int,
     stats: dict,
     niveau: int | None = None,
+    cumuls: dict[str, float] | None = None,
 ) -> float:
     """La valeur de la formule `nom` d'un sort, a un rang et avec des stats donnes.
 
@@ -41,20 +60,24 @@ def evaluate_formula(
     valeurs : les valeurs par rang du sort, {nom: [rang 1, rang 2, ...]}.
     stats : les stats du champion (cles de stats_with_items : ap, ad, ad_bonus...).
     niveau : le niveau du champion (1 a 20), pour les morceaux qui en dependent.
+    cumuls : le nombre de cumuls de chaque effet, {nom du cumul: nombre}, pour
+    les morceaux "compteur de cumuls" (Q de Nasus, E de Cho'Gath...). Ce nombre
+    n'est pas dans les fichiers du jeu : c'est un reglage de scenario. Les noms
+    sont ceux du fichier, souvent chiffres ("{1b1d7345}" pour Nasus).
 
     Un morceau pas encore gere, un code de stat pas encore decode ou une valeur
     par rang absente levent une erreur qui les nomme : jamais de chiffre faux
     en silence.
     """
-    return _calcul(formules[nom], formules, valeurs, rang, stats, niveau)
+    return _calcul(formules[nom], formules, valeurs, rang, stats, niveau, cumuls)
 
 
-def _calcul(noeud, formules, valeurs, rang, stats, niveau):
+def _calcul(noeud, formules, valeurs, rang, stats, niveau, cumuls):
     """La valeur d'un morceau : on descend dans l'arbre (fonction recursive)."""
 
     def sous(morceau):
         # Raccourci : la valeur d'un sous-morceau, avec le meme contexte.
-        return _calcul(morceau, formules, valeurs, rang, stats, niveau)
+        return _calcul(morceau, formules, valeurs, rang, stats, niveau, cumuls)
 
     type_ = noeud["__type"]
     if type_ == "GameCalculation":
@@ -90,7 +113,44 @@ def _calcul(noeud, formules, valeurs, rang, stats, niveau):
         return _interpolation(noeud, _niveau(niveau))
     if type_ == "ByCharLevelBreakpointsCalculationPart":
         return _paliers(noeud, _niveau(niveau))
+    if type_ == "{ee18a47b}":
+        # Nom de classe chiffre (non retrouve). Une valeur de depart et une
+        # d'arrivee, par rang : une LIGNE DROITE du niveau 1 au niveau 18. Le
+        # wiki l'ecrit ainsi pour l'eclair d'Udyr Q ("1.5 + (3-1.5)/17*(x-1)
+        # for 20", lu le 18/11/2026), et la prolonge apres 18 (non mesure).
+        debut = _valeur(noeud["StartDataValue"], valeurs, rang)
+        fin = _valeur(noeud["EndDataValue"], valeurs, rang)
+        return debut + (fin - debut) * (_niveau(niveau) - 1) / 17
+    if type_ == "AbilityResourceByCoefficientCalculationPart":
+        return noeud["mCoefficient"] * _ressource(noeud, stats)
+    if type_ == "BuffCounterByCoefficientCalculationPart":
+        return noeud["mCoefficient"] * _cumuls(noeud, cumuls)
+    if type_ == "BuffCounterByNamedDataValueCalculationPart":
+        return _valeur(noeud["mDataValue"], valeurs, rang) * _cumuls(noeud, cumuls)
     raise ValueError(f"morceau de formule pas encore gere : {type_}")
+
+
+# Le mana dans les stats du simulateur : total (formule absente) ou bonus (2),
+# la meme regle que pour l'AD ou les PV. Ryze : % du mana BONUS ; Kassadin et
+# Blitzcrank : % du mana MAX (ce que disent leurs infobulles en jeu).
+RESSOURCE_PAR_FORMULE = {0: "resource", 2: "resource_bonus"}
+
+
+def _ressource(noeud: dict, stats: dict) -> float:
+    formule = noeud.get("mStatFormula", 0)
+    if formule not in RESSOURCE_PAR_FORMULE:
+        raise ValueError(f"formule de ressource pas encore decodee : {formule}")
+    return stats[RESSOURCE_PAR_FORMULE[formule]]
+
+
+def _cumuls(noeud: dict, cumuls: dict | None) -> float:
+    """Le nombre de cumuls que demande un morceau "compteur". Absent : une
+    erreur qui nomme le cumul, jamais un 0 silencieux (un Nasus a 0 cumul et
+    un Nasus a 600 ne sont pas le meme champion)."""
+    nom = noeud["mBuffName"]
+    if not cumuls or nom not in cumuls:
+        raise ValueError(f"nombre de cumuls requis pour {nom}")
+    return cumuls[nom]
 
 
 def _niveau(niveau: int | None) -> int:
@@ -143,10 +203,21 @@ def _paliers(noeud: dict, niveau: int) -> float:
 
 
 def _valeur(nom: str, valeurs: dict, rang: int) -> float:
-    """La valeur par rang `nom`, au rang voulu (rang 1 = premier element)."""
-    if nom not in valeurs:
+    """La valeur par rang `nom`, au rang voulu (rang 1 = premier element).
+
+    Le nom exact d'abord ; sinon le meme nom SANS tenir compte de la casse : le
+    jeu chiffre ses noms en minuscules (FNV-1a), BADRatio et bADRatio sont le
+    meme nom pour lui (12 formules de degats au 16.23 : Fiora Q, Morgana W...).
+    Deux valeurs qui ne different que par la casse (2 sorts au 16.23) : une
+    erreur, jamais un choix au hasard."""
+    if nom in valeurs:
+        return valeurs[nom][rang - 1]
+    memes = [cle for cle in valeurs if cle.lower() == nom.lower()]
+    if len(memes) > 1:
+        raise ValueError(f"valeur par rang ambigue : {nom} ({memes})")
+    if not memes:
         raise ValueError(f"valeur par rang absente : {nom}")
-    return valeurs[nom][rang - 1]
+    return valeurs[memes[0]][rang - 1]
 
 
 def _stat(noeud: dict, stats: dict) -> float:

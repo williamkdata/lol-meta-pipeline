@@ -69,3 +69,66 @@ def basic_attack_dps(attacker: dict, target_armor: float) -> float:
     return (
         attacker["ad"] * critique * attacker["attack_speed"] * damage_multiplier(armure)
     )
+
+
+# Ce que multiplie la valeur d'une formule de degats, d'apres les mots de son
+# infobulle (int_kit__damage_formulas.scales_with, 18/11/2026). 'other' (un %
+# d'AD bonus, Udyr Q2 mal lu...) n'en fait pas partie : il leve une erreur.
+CIBLES_DES_POURCENTAGES = (
+    "flat",
+    "target_max_hp",
+    "target_missing_hp",
+    "target_current_hp",
+)
+
+
+def spell_hit_damage(
+    valeur: float,
+    damage_type: str,
+    scales_with: str,
+    attacker: dict,
+    target: dict,
+    target_current_hp: float | None = None,
+) -> float:
+    """Ce que la cible encaisse d'UN coup de sort, apres ses resistances.
+
+    valeur : ce que rend evaluate_formula. Un nombre de degats ('flat'), ou une
+    FRACTION si la formule est en pourcentage (0.09 = 9 %).
+    damage_type : 'physical', 'magic' ou 'true' (la balise de l'infobulle).
+    scales_with : ce que multiplie la fraction (voir CIBLES_DES_POURCENTAGES).
+    attacker : les stats que rend stats_with_items (penetrations, letalite).
+    target : 'hp' (PV max), 'armor', 'mr' (totaux).
+    target_current_hp : PV actuels de la cible ; par defaut, pleine vie.
+
+    Les degats bruts ('true') ignorent armure et RM. Pas encore geres : les
+    plafonds contre les monstres, les reductions de degats, les boucliers.
+    """
+    pv_max = target["hp"]
+    pv_actuels = pv_max if target_current_hp is None else target_current_hp
+    if not 0 <= pv_actuels <= pv_max:
+        raise ValueError(f"PV actuels hors de [0, {pv_max}] : {pv_actuels}")
+
+    if scales_with == "flat":
+        brut = valeur
+    elif scales_with == "target_max_hp":
+        brut = valeur * pv_max
+    elif scales_with == "target_missing_hp":
+        brut = valeur * (pv_max - pv_actuels)
+    elif scales_with == "target_current_hp":
+        brut = valeur * pv_actuels
+    else:
+        raise ValueError(f"pourcentage de quoi ? '{scales_with}' : pas gere")
+
+    if damage_type == "true":
+        return brut
+    if damage_type == "physical":
+        resistance = effective_resistance(
+            target["armor"], attacker["armor_pen_pct"], attacker["lethality"]
+        )
+    elif damage_type == "magic":
+        resistance = effective_resistance(
+            target["mr"], attacker["magic_pen_pct"], attacker["magic_pen_flat"]
+        )
+    else:
+        raise ValueError(f"type de degats inconnu : '{damage_type}'")
+    return brut * damage_multiplier(resistance)

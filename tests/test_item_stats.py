@@ -1,6 +1,7 @@
 from fakes import FakeBigQuery, FakeHttp, FakeResponse
 from item_stats import (
     ITEM_STATS_TABLE,
+    flatten_item_groups,
     flatten_item_stats,
     item_stats_url,
     load_item_stats_season,
@@ -163,3 +164,96 @@ def test_load_item_stats_season_loads_nothing_for_a_patch_not_yet_published():
 
     assert client.appels == []
     assert bilans == [{"patch": "16.23", "objets": 0, "stats": 0}]
+
+
+# --- Les groupes d'objets (18/11/2026) : le jeu limite certains cumuls --------
+# Le Lord Dominik et le Rappel mortel (16.23) : groupe "LastWhisper", 1 au plus.
+GROUPES = {
+    "Items/3036": {
+        "itemID": 3036,
+        "mItemGroups": ["Items/ItemGroups/Default", "Items/ItemGroups/LastWhisper"],
+        "__type": "ItemData",
+    },
+    "Items/3033": {
+        "itemID": 3033,
+        "mItemGroups": ["Items/ItemGroups/Default", "Items/ItemGroups/LastWhisper"],
+        "__type": "ItemData",
+    },
+    "Items/3071": {"itemID": 3071, "__type": "ItemData"},
+    "Items/ItemGroups/LastWhisper": {
+        "mItemGroupID": "LastWhisper",
+        "mMaxGroupOwnable": 1,
+        "__type": "ItemGroup",
+    },
+    "Items/ItemGroups/Default": {"mItemGroupID": "Default", "__type": "ItemGroup"},
+}
+
+
+def lignes_de(lignes, item_id):
+    return sorted(
+        (ligne["item_group"], ligne["max_ownable"], ligne["group_defined"])
+        for ligne in lignes
+        if ligne["item_id"] == item_id
+    )
+
+
+def test_un_objet_a_une_ligne_par_groupe():
+    lignes = flatten_item_groups("16.23", GROUPES)
+
+    assert lignes_de(lignes, 3036) == [
+        ("Default", None, True),
+        ("LastWhisper", 1, True),
+    ]
+    assert all(ligne["patch"] == "16.23" for ligne in lignes)
+
+
+def test_deux_objets_du_meme_groupe_limite():
+    # Le moteur de build saura qu'on ne peut pas avoir les deux.
+    lignes = flatten_item_groups("16.23", GROUPES)
+
+    dans_last_whisper = {
+        ligne["item_id"] for ligne in lignes if ligne["item_group"] == "LastWhisper"
+    }
+    assert dans_last_whisper == {3033, 3036}
+
+
+def test_un_objet_sans_groupe_n_a_pas_de_ligne():
+    assert lignes_de(flatten_item_groups("16.23", GROUPES), 3071) == []
+
+
+def test_un_groupe_cite_mais_absent_du_fichier_est_garde_et_signale():
+    # Jamais perdu en silence : sans sa definition, on ne connait pas sa
+    # limite. La ligne reste, marquee "groupe non defini".
+    fichier = {
+        **GROUPES,
+        "Items/3036": {
+            "itemID": 3036,
+            "mItemGroups": ["Items/ItemGroups/Mystere"],
+            "__type": "ItemData",
+        },
+    }
+    assert lignes_de(flatten_item_groups("16.23", fichier), 3036) == [
+        ("Mystere", None, False)
+    ]
+
+
+def test_un_groupe_a_la_cle_chiffree_est_retrouve_par_son_empreinte():
+    # CommunityDragon remplace une cle par son nom quand il le connait ;
+    # sinon, la cle est l'empreinte FNV-1a 32 bits du chemin en minuscules
+    # (la meme que pour la fiche des champions). "items/itemgroups/boots" ->
+    # {eae58fd1} (controle : "mrperlevel" -> {01262a25}, verifie le 16/11).
+    fichier = {
+        "Items/3006": {
+            "itemID": 3006,
+            "mItemGroups": ["Items/ItemGroups/Boots"],
+            "__type": "ItemData",
+        },
+        "{eae58fd1}": {
+            "mItemGroupID": "Boots",
+            "mMaxGroupOwnable": 1,
+            "__type": "ItemGroup",
+        },
+    }
+    assert lignes_de(flatten_item_groups("16.23", fichier), 3006) == [
+        ("Boots", 1, True)
+    ]

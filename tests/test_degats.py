@@ -1,6 +1,11 @@
 import pytest
 
-from degats import basic_attack_dps, damage_multiplier, effective_resistance
+from degats import (
+    basic_attack_dps,
+    damage_multiplier,
+    effective_resistance,
+    spell_hit_damage,
+)
 
 
 def test_sans_armure_tout_passe():
@@ -129,3 +134,111 @@ def test_jinx_niveau_11_avec_trois_objets():
         "lethality": 0.0,
     }
     assert basic_attack_dps(jinx, target_armor=100) == pytest.approx(144.998, abs=1e-3)
+
+
+# --- spell_hit_damage : ce que la cible encaisse d'UN coup de sort (18/11) ---
+# Un attaquant sans penetration, et une cible "mannequin" : 2 000 PV, 100
+# d'armure, 50 de RM.
+SANS_PENETRATION = {
+    "armor_pen_pct": 0.0,
+    "lethality": 0.0,
+    "magic_pen_pct": 0.0,
+    "magic_pen_flat": 0.0,
+}
+MANNEQUIN = {"hp": 2000.0, "armor": 100.0, "mr": 50.0}
+
+
+def test_des_degats_magiques_fixes_passent_la_rm():
+    # 300 magiques contre 50 de RM : 300 x 100 / 150.
+    assert spell_hit_damage(
+        300, "magic", "flat", SANS_PENETRATION, MANNEQUIN
+    ) == pytest.approx(200)
+
+
+def test_des_degats_physiques_passent_l_armure_apres_la_letalite():
+    # 200 physiques, 100 d'armure moins 20 de letalite : 200 x 100 / 180.
+    attaquant = {**SANS_PENETRATION, "lethality": 20.0}
+    assert spell_hit_damage(
+        200, "physical", "flat", attaquant, MANNEQUIN
+    ) == pytest.approx(111.111, abs=1e-3)
+
+
+def test_des_degats_bruts_ignorent_les_resistances():
+    cible = {**MANNEQUIN, "armor": 300.0, "mr": 300.0}
+    assert spell_hit_damage(100, "true", "flat", SANS_PENETRATION, cible) == 100
+
+
+def test_la_penetration_magique_compte():
+    # RM 50 x (1 - 0,4) = 30, moins 15 fixes = 15 : 300 x 100 / 115.
+    attaquant = {**SANS_PENETRATION, "magic_pen_pct": 0.4, "magic_pen_flat": 15.0}
+    assert spell_hit_damage(
+        300, "magic", "flat", attaquant, MANNEQUIN
+    ) == pytest.approx(260.870, abs=1e-3)
+
+
+def test_un_pourcentage_des_pv_max_de_la_cible():
+    # Passif de Brand : 9 % des PV max, magiques. 0,09 x 2 000 = 180, puis la
+    # RM : 180 x 100 / 150 = 120.
+    assert spell_hit_damage(
+        0.09, "magic", "target_max_hp", SANS_PENETRATION, MANNEQUIN
+    ) == pytest.approx(120)
+
+
+def test_un_pourcentage_des_pv_manquants():
+    # E de Kayle : 10 % des PV manquants. Cible a 1 200 PV sur 2 000 : 80,
+    # magiques, contre 0 de RM.
+    cible = {**MANNEQUIN, "mr": 0.0}
+    assert spell_hit_damage(
+        0.1,
+        "magic",
+        "target_missing_hp",
+        SANS_PENETRATION,
+        cible,
+        target_current_hp=1200,
+    ) == pytest.approx(80)
+
+
+def test_a_pleine_vie_les_pv_manquants_ne_font_rien():
+    # Sans PV actuels donnes, la cible est a pleine vie.
+    assert (
+        spell_hit_damage(0.1, "magic", "target_missing_hp", SANS_PENETRATION, MANNEQUIN)
+        == 0
+    )
+
+
+def test_un_pourcentage_des_pv_actuels():
+    # Q de Viego : 8 % des PV actuels, physiques. 0,08 x 1 500 = 120, contre 0
+    # d'armure.
+    cible = {**MANNEQUIN, "armor": 0.0}
+    assert spell_hit_damage(
+        0.08,
+        "physical",
+        "target_current_hp",
+        SANS_PENETRATION,
+        cible,
+        target_current_hp=1500,
+    ) == pytest.approx(120)
+
+
+def test_un_pourcentage_d_autre_chose_fait_du_bruit():
+    # 'other' : un % d'AD bonus (Jhin), Udyr Q2 mal lu... On ne sait pas ce
+    # qu'il multiplie : une erreur plutot qu'un faux nombre.
+    with pytest.raises(ValueError, match="other"):
+        spell_hit_damage(0.3, "physical", "other", SANS_PENETRATION, MANNEQUIN)
+
+
+def test_un_type_de_degats_inconnu_fait_du_bruit():
+    with pytest.raises(ValueError, match="poison"):
+        spell_hit_damage(100, "poison", "flat", SANS_PENETRATION, MANNEQUIN)
+
+
+def test_des_pv_actuels_au_dessus_du_max_sont_refuses():
+    with pytest.raises(ValueError, match="PV actuels"):
+        spell_hit_damage(
+            0.1,
+            "magic",
+            "target_current_hp",
+            SANS_PENETRATION,
+            MANNEQUIN,
+            target_current_hp=2500,
+        )

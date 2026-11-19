@@ -97,4 +97,6 @@ def stats_with_items(champion: dict, items: list[dict[str, float]]) -> dict:
         "magic_pen_flat": sommes["magic_pen_flat"],
         "magic_pen_pct": 1 - restes["magic_pen_pct"],
         "resource": champion["resource"] + mana,
+        # Le mana des objets seul (Ryze : ses degats montent avec le mana BONUS).
+        "resource_bonus": mana,
     }

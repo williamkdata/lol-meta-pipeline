@@ -111,3 +111,21 @@ def test_une_stat_ignoree_expres_ne_change_rien():
 def test_une_stat_inconnue_fait_du_bruit():
     with pytest.raises(ValueError, match="FlatNouvelleStatMod"):
         stats_with_items(JINX_11, [{"FlatNouvelleStatMod": 10.0}])
+
+
+# --- Le mana bonus (18/11/2026) : Ryze tire ses degats d'un % du mana BONUS ---
+
+
+def test_le_mana_bonus_vient_des_objets():
+    s = stats_with_items(JINX_11, [MANAMUNE])
+    assert s["resource_bonus"] == 500.0
+    assert s["resource"] == pytest.approx(698.75 + 500)
+
+
+def test_pas_de_mana_bonus_pour_un_champion_sans_mana():
+    s = stats_with_items(ZED_11, [MANAMUNE])
+    assert s["resource_bonus"] == 0.0
+
+
+def test_sans_objet_pas_de_mana_bonus():
+    assert stats_with_items(JINX_11, [])["resource_bonus"] == 0.0

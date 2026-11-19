@@ -81,6 +81,62 @@ def flatten_item_stats(patch: str, fichier: dict) -> list[dict]:
     return lignes
 
 
+# Les groupes d'objets (18/11/2026) : le jeu limite certains cumuls (un seul
+# objet du groupe "LastWhisper" : Lord Dominik, Rappel mortel... ; une seule
+# paire de bottes). Le moteur de build ne doit jamais proposer un build
+# impossible. Au 16.23 : 2 051 liens objet -> groupe, tous en clair ; 274
+# groupes limites cites par des objets (beaucoup pour le mode Arena).
+ITEM_GROUPS_TABLE = "lol-meta-pipeline.lol_raw.item_groups"
+ITEM_GROUPS_SCHEMA = [
+    bigquery.SchemaField("patch", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("item_id", "INTEGER", mode="REQUIRED"),
+    # Le dernier morceau du chemin : Items/ItemGroups/LastWhisper -> LastWhisper.
+    bigquery.SchemaField("item_group", "STRING", mode="REQUIRED"),
+    # Combien d'objets du groupe on peut avoir. Vide : pas de limite (Default).
+    bigquery.SchemaField("max_ownable", "INTEGER"),
+    # Faux si le groupe est cite par l'objet mais introuvable dans le fichier :
+    # sa limite est alors inconnue (a ne pas confondre avec "sans limite").
+    bigquery.SchemaField("group_defined", "BOOLEAN", mode="REQUIRED"),
+]
+
+
+def _empreinte(chemin: str) -> str:
+    """La cle chiffree d'un chemin du fichier : FNV-1a 32 bits du chemin en
+    minuscules, comme CommunityDragon quand il ne connait pas le nom (la meme
+    que pour la fiche des champions : "mrperlevel" -> {01262a25})."""
+    valeur = 0x811C9DC5
+    for octet in chemin.lower().encode("utf-8"):
+        valeur = ((valeur ^ octet) * 0x01000193) & 0xFFFFFFFF
+    return f"{{{valeur:08x}}}"
+
+
+def flatten_item_groups(patch: str, fichier: dict) -> list[dict]:
+    """Une ligne par objet et par groupe qu'il cite (mItemGroups).
+
+    Le groupe est cherche sous son chemin, sinon sous son empreinte. Un groupe
+    introuvable est GARDE, marque group_defined = False : jamais perdu en
+    silence."""
+    lignes = []
+    for cle, objet in fichier.items():
+        numero = cle.removeprefix("Items/")
+        if not cle.startswith("Items/") or not numero.isdigit():
+            continue
+        if not isinstance(objet, dict):
+            continue
+        for chemin in objet.get("mItemGroups", []):
+            groupe = fichier.get(chemin) or fichier.get(_empreinte(chemin))
+            lignes.append(
+                {
+                    "patch": patch,
+                    "item_id": int(numero),
+                    "item_group": chemin.rsplit("/", 1)[-1],
+                    "max_ownable": groupe.get("mMaxGroupOwnable") if groupe else None,
+                    "group_defined": groupe is not None,
+                }
+            )
+    return lignes
+
+
 def loaded_item_stat_patches(client) -> set[str]:
     """Les patches deja en base. Vide si la table n'existe pas encore."""
     sql = f"SELECT DISTINCT patch FROM `{ITEM_STATS_TABLE}`"
