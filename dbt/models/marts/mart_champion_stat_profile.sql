@@ -15,11 +15,33 @@
 --   ratios par rang lus au rang maximum du sort (Data Dragon), rang 1 pour le
 --     passif : c'est quand on a ses objets qu'on a ses sorts au maximum.
 -- Seuls les codes de stats decodes (seed stat_codes) comptent.
+--
+-- Quatrieme regle, "sans la survie" (decision de William, 19/11/2026) : les
+-- ratios des formules que l'infobulle designe CLAIREMENT comme de la survie
+-- (bouclier, soin ou PV "healing", vitesse) ne comptent plus, sauf si la meme
+-- formule est aussi balisee degats (un drain). Une formule absente des
+-- infobulles reste comptee : retirer ce qu'on ne sait pas classer cassait une
+-- vingtaine de champions (Gnar, Jayce...). Mesure du 19/11 au 16.23 : 151 tops
+-- 5 sur 173 inchanges ; corrige Annie (les PV de Tibbers en faisaient une
+-- acheteuse d'objets PV), Mordekaiser, Maitre Yi, Gangplank, K'Sante.
 
 WITH rangs_max AS (
     SELECT patch_key, champion_id, slot, MAX(max_rank) AS max_rank
     FROM {{ ref('stg_ddragon__spells') }}
     GROUP BY patch_key, champion_id, slot
+),
+
+formules_de_survie AS (
+    -- Les formules dont TOUTES les balises sont de la survie (au moins une), et
+    -- aucune de degats. Les noms des infobulles sont en minuscules.
+    SELECT patch_key, champion_id, slot, spell_name, name
+    FROM {{ ref('stg_kit__spell_tooltips') }}
+    GROUP BY patch_key, champion_id, slot, spell_name, name
+    HAVING
+        LOGICAL_OR(
+            LOWER(tag) LIKE '%shield%' OR LOWER(tag) LIKE '%heal%' OR LOWER(tag) = 'speed'
+        )
+        AND NOT LOGICAL_OR(tag IN ('physicalDamage', 'magicDamage', 'trueDamage'))
 ),
 
 ratios AS (
@@ -41,9 +63,16 @@ ratios AS (
         AND p.slot = v.slot
         AND p.data_value = v.value_name
         AND COALESCE(r.max_rank, 1) = v.spell_rank
+    LEFT JOIN formules_de_survie AS s
+        ON p.patch_key = s.patch_key
+        AND p.champion_id = s.champion_id
+        AND p.slot = s.slot
+        AND p.spell_name = s.spell_name
+        AND LOWER(p.calc_name) = s.name
     WHERE p.part_type IN (
         'StatByCoefficientCalculationPart', 'StatByNamedDataValueCalculationPart'
     )
+        AND s.name IS NULL
 ),
 
 ratios_distincts AS (

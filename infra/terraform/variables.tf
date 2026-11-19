@@ -44,10 +44,14 @@ variable "alerte_courriel" {
   type        = string
 }
 
+# 1 : 18/11/2026 (commit 194111e). 2 : 19/11/2026 (commit f705bdd : codes de
+# vitesse d'attaque, critique et letalite dans le moteur theorique ; groupes
+# d'objets charges). 3 : 19/11/2026 (regle "sans la survie" du moteur
+# theorique). Revenir en arriere : remettre l'ancienne valeur et apply.
 variable "job_image_tag" {
   description = "La version de l'image du job a lancer (etiquette sur l'etagere lol-job)."
   type        = string
-  default     = "1"
+  default     = "3"
 }
 
 variable "ladder_retention_days" {

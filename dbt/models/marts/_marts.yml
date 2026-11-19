@@ -980,3 +980,59 @@ unit_tests:
         - {champion_id: 54, item_id: 3053, useful_gold_efficiency: 0.3125, rank_for_champion: 3}
         - {champion_id: 54, item_id: 3031, useful_gold_efficiency: 0.0, rank_for_champion: 4}
         - {champion_id: 81, item_id: 9100, useful_gold_efficiency: 0.5, rank_for_champion: 1}
+
+  # « Sans la survie » (decision de William, 19/11/2026) : les ratios des
+  # formules que l'infobulle designe CLAIREMENT comme de la survie (bouclier,
+  # soin ou PV "healing", vitesse) ne comptent plus, sauf si la meme formule
+  # est aussi balisee degats. Une formule absente des infobulles (Gnar,
+  # Jayce...) reste comptee : retirer ce qu'on ne sait pas classer casserait
+  # une vingtaine de champions (mesure du 19/11, projet3_explications 9.83).
+  # Annie au 16.23 : les PV de Tibbers (+150 % des PV bonus) ne font plus
+  # d'elle une acheteuse d'objets PV.
+  - name: stat_profile_leaves_out_survival_formulas
+    model: mart_champion_stat_profile
+    given:
+      - input: ref('stg_ddragon__spells')
+        rows:
+          - {patch_key: 1623, champion_id: 1, slot: Q, max_rank: 5}
+      - input: ref('stg_kit__values')
+        rows:
+          - {patch_key: 1623, champion_id: 1, slot: Q, value_name: Inutile, spell_rank: 5, value: 1.0}
+      - input: ref('stg_kit__parts')
+        rows:
+          - {patch_key: 1623, champion_id: 1, champion_code: Annie, slot: Q, spell_name: AnnieQ, calc_name: TotalDamage,
+             part_type: StatByCoefficientCalculationPart, stat: 0, stat_formula: 0, coefficient: 0.75}
+          - {patch_key: 1623, champion_id: 1, champion_code: Annie, slot: R, spell_name: AnnieR, calc_name: TibbersTotalHP,
+             part_type: StatByCoefficientCalculationPart, stat: 12, stat_formula: 2, coefficient: 1.5}
+          - {patch_key: 1623, champion_id: 1, champion_code: Annie, slot: E, spell_name: AnnieE, calc_name: ShieldBlockTotal,
+             part_type: StatByCoefficientCalculationPart, stat: 0, stat_formula: 0, coefficient: 0.4}
+          - {patch_key: 1623, champion_id: 1, champion_code: Annie, slot: R, spell_name: AnnieR, calc_name: TibbersAADamage,
+             part_type: StatByCoefficientCalculationPart, stat: 0, stat_formula: 0, coefficient: 0.15}
+          - {patch_key: 1623, champion_id: 1, champion_code: Annie, slot: W, spell_name: AnnieW, calc_name: DrainDamage,
+             part_type: StatByCoefficientCalculationPart, stat: 0, stat_formula: 0, coefficient: 0.3}
+          - {patch_key: 1623, champion_id: 1, champion_code: Annie, slot: P, spell_name: AnnieP, calc_name: SansInfobulle,
+             part_type: StatByCoefficientCalculationPart, stat: 2, stat_formula: 0, coefficient: 0.5}
+          # Ajoute apres un sabotage ("vitesses oubliees" passait) : une
+          # vitesse de deplacement a ratio d'AP, balisee "speed" : retiree.
+          - {patch_key: 1623, champion_id: 1, champion_code: Annie, slot: E, spell_name: AnnieE, calc_name: MoveSpeedBonus,
+             part_type: StatByCoefficientCalculationPart, stat: 0, stat_formula: 0, coefficient: 0.2}
+      - input: ref('stg_kit__spell_tooltips')
+        rows:
+          - {patch_key: 1623, champion_id: 1, slot: Q, spell_name: AnnieQ, name: totaldamage, tag: magicDamage}
+          - {patch_key: 1623, champion_id: 1, slot: R, spell_name: AnnieR, name: tibberstotalhp, tag: healing}
+          - {patch_key: 1623, champion_id: 1, slot: E, spell_name: AnnieE, name: shieldblocktotal, tag: shield}
+          - {patch_key: 1623, champion_id: 1, slot: R, spell_name: AnnieR, name: tibbersaadamage, tag: scaleAD}
+          - {patch_key: 1623, champion_id: 1, slot: W, spell_name: AnnieW, name: draindamage, tag: magicDamage}
+          - {patch_key: 1623, champion_id: 1, slot: W, spell_name: AnnieW, name: draindamage, tag: healing}
+          - {patch_key: 1623, champion_id: 1, slot: E, spell_name: AnnieE, name: movespeedbonus, tag: speed}
+      - input: ref('stat_codes')
+        rows:
+          - {stat: 0, stat_formula: 0, stat_label: AP totale, item_stat: FlatMagicDamageMod, statut: verifie}
+          - {stat: 2, stat_formula: 0, stat_label: attaque totale, item_stat: FlatPhysicalDamageMod, statut: verifie}
+          - {stat: 12, stat_formula: 2, stat_label: PV bonus, item_stat: FlatHPPoolMod, statut: verifie}
+    expect:
+      rows:
+        # Q 0,75 + attaque de Tibbers 0,15 + drain 0,3 ; le bouclier (0,4) et la
+        # vitesse (0,2) sont retires.
+        - {patch_key: 1623, champion_id: 1, champion_code: Annie, stat_label: AP totale, ratios: 3, total_coefficient: 1.2}
+        - {patch_key: 1623, champion_id: 1, champion_code: Annie, stat_label: attaque totale, ratios: 1, total_coefficient: 0.5}
