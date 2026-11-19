@@ -9,3 +9,7 @@ stat,stat_formula,stat_label,item_stat,statut
 1,2,armure bonus,FlatArmorMod,deduit
 6,0,RM totale,FlatSpellBlockMod,deduit
 6,2,RM bonus,FlatSpellBlockMod,deduit
+4,2,vitesse d'attaque bonus,PercentAttackSpeedMod,deduit
+8,0,chances de critique,FlatCritChanceMod,deduit
+9,0,degats critiques,FlatCritDamageMod,deduit
+29,0,letalite,PhysicalLethality,deduit

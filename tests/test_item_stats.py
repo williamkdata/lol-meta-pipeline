@@ -1,5 +1,9 @@
-from fakes import FakeBigQuery, FakeHttp, FakeResponse
+from google.api_core.exceptions import NotFound
+
+from fakes import FakeBigQuery, FakeHttp, FakeQueryJob, FakeResponse
 from item_stats import (
+    ITEM_GROUPS_SCHEMA,
+    ITEM_GROUPS_TABLE,
     ITEM_STATS_TABLE,
     flatten_item_groups,
     flatten_item_stats,
@@ -141,18 +145,72 @@ def test_item_stats_url_uses_the_patch_folder():
     )
 
 
-def test_load_item_stats_season_loads_only_the_missing_patches():
+class BigQueryParTable(FakeBigQuery):
+    """Un faux BigQuery qui repond SELON LA TABLE interrogee (le faux commun
+    repond la meme chose a toutes les requetes) : {table: patches en base}.
+    Une table absente du dictionnaire n'existe pas encore."""
+
+    def __init__(self, patches_par_table):
+        super().__init__()
+        self._par_table = patches_par_table
+
+    def query(self, sql):
+        self.requetes.append(sql)
+        for table, patches in self._par_table.items():
+            if f"`{table}`" in sql:
+                return FakeQueryJob([{"patch": p} for p in patches])
+        raise NotFound("table absente")
+
+
+def serveur_objets(fichier_16_22):
     http = FakeHttp()
     http.reponse = FakeResponse(status_code=404)
-    http.reponses[item_stats_url("16.22")] = FakeResponse(OBJETS)
-    client = FakeBigQuery(resultat_requete=[{"patch": "16.21"}])
+    http.reponses[item_stats_url("16.22")] = FakeResponse(fichier_16_22)
+    return http
+
+
+def test_load_item_stats_season_loads_only_the_missing_patches():
+    # Stats ET groupes manquent au 16.22 : les deux tables sont chargees, avec
+    # un seul telechargement. Le Couperet noir (3 stats) ; Lord Dominik et
+    # Rappel mortel (2 groupes chacun).
+    http = serveur_objets({**GROUPES, **OBJETS})
+    client = BigQueryParTable(
+        {ITEM_STATS_TABLE: ["16.21"], ITEM_GROUPS_TABLE: ["16.21"]}
+    )
 
     bilans = load_item_stats_season(["16.22.1", "16.21.1"], http, client)
 
-    assert [bilan["patch"] for bilan in bilans] == ["16.22"]
-    [(rows, destination, _)] = client.appels
-    assert destination == ITEM_STATS_TABLE
-    assert len(rows) == 3
+    assert bilans == [{"patch": "16.22", "objets": 1, "stats": 3, "groupes": 4}]
+    assert [destination for _, destination, _ in client.appels] == [
+        ITEM_STATS_TABLE,
+        ITEM_GROUPS_TABLE,
+    ]
+    assert [url for url, _ in http.appels] == [item_stats_url("16.22")]
+
+
+def test_a_new_table_fills_its_own_missing_patches_only():
+    # Les stats du 16.22 sont deja la, pas les groupes (table ajoutee le
+    # 19/11) : seuls les groupes sont charges, rien n'est charge deux fois.
+    http = serveur_objets({**GROUPES, **OBJETS})
+    client = BigQueryParTable({ITEM_STATS_TABLE: ["16.22"]})
+
+    bilans = load_item_stats_season(["16.22.1"], http, client)
+
+    assert bilans == [{"patch": "16.22", "groupes": 4}]
+    [(rows, destination, config)] = client.appels
+    assert destination == ITEM_GROUPS_TABLE
+    assert config.schema == ITEM_GROUPS_SCHEMA
+    assert len(rows) == 4
+
+
+def test_nothing_is_downloaded_when_every_table_is_complete():
+    http = serveur_objets({**GROUPES, **OBJETS})
+    client = BigQueryParTable(
+        {ITEM_STATS_TABLE: ["16.22"], ITEM_GROUPS_TABLE: ["16.22"]}
+    )
+
+    assert load_item_stats_season(["16.22.1"], http, client) == []
+    assert http.appels == []
 
 
 def test_load_item_stats_season_loads_nothing_for_a_patch_not_yet_published():
@@ -163,7 +221,7 @@ def test_load_item_stats_season_loads_nothing_for_a_patch_not_yet_published():
     bilans = load_item_stats_season(["16.23.1"], http, client)
 
     assert client.appels == []
-    assert bilans == [{"patch": "16.23", "objets": 0, "stats": 0}]
+    assert bilans == [{"patch": "16.23", "objets": 0, "stats": 0, "groupes": 0}]
 
 
 # --- Les groupes d'objets (18/11/2026) : le jeu limite certains cumuls --------

@@ -137,9 +137,10 @@ def flatten_item_groups(patch: str, fichier: dict) -> list[dict]:
     return lignes
 
 
-def loaded_item_stat_patches(client) -> set[str]:
-    """Les patches deja en base. Vide si la table n'existe pas encore."""
-    sql = f"SELECT DISTINCT patch FROM `{ITEM_STATS_TABLE}`"
+def loaded_item_stat_patches(client, table: str = ITEM_STATS_TABLE) -> set[str]:
+    """Les patches deja en base dans une table (par defaut, les stats). Vide si
+    la table n'existe pas encore."""
+    sql = f"SELECT DISTINCT patch FROM `{table}`"
     try:
         lignes = client.query(sql).result()
     except NotFound:
@@ -148,26 +149,40 @@ def loaded_item_stat_patches(client) -> set[str]:
 
 
 def load_item_stats_season(versions: list[str], session, client) -> list[dict]:
-    """Charge les stats des objets des patches de la saison PAS ENCORE en base.
-    Un patch pas encore publie (404) ne charge rien : repris le lendemain."""
-    deja = loaded_item_stat_patches(client)
+    """Charge, pour chaque patch de la saison, les tables ou il MANQUE : les
+    stats des objets et leurs groupes (ajoutes le 19/11/2026).
+
+    Table par table, comme les kits : une table ajoutee plus tard complete ses
+    propres patches sans recharger l'autre. Un seul telechargement par patch.
+    Un patch pas encore publie (404) ne charge rien : repris le lendemain.
+    Le bilan ne parle que des tables chargees (lecon du 09/11)."""
+    deja = {
+        ITEM_STATS_TABLE: loaded_item_stat_patches(client, ITEM_STATS_TABLE),
+        ITEM_GROUPS_TABLE: loaded_item_stat_patches(client, ITEM_GROUPS_TABLE),
+    }
     bilans = []
     for patch in season_patches(versions):
-        if patch in deja:
+        manquantes = [table for table, patches in deja.items() if patch not in patches]
+        if not manquantes:
             continue
         reponse = session.get(item_stats_url(patch), timeout=TIMEOUT_S)
         if reponse.status_code == 404:
-            lignes = []
+            fichier = {}
         else:
             reponse.raise_for_status()
-            lignes = flatten_item_stats(patch, reponse.json())
-        load_rows(lignes, ITEM_STATS_TABLE, ITEM_STATS_SCHEMA, client)
-        bilan = {
-            "patch": patch,
-            "objets": len({ligne["item_id"] for ligne in lignes}),
-            "stats": len(lignes),
-        }
-        journal.info("stats des objets %s : %s", patch, bilan)
+            fichier = reponse.json()
+
+        bilan = {"patch": patch}
+        if ITEM_STATS_TABLE in manquantes:
+            lignes = flatten_item_stats(patch, fichier)
+            load_rows(lignes, ITEM_STATS_TABLE, ITEM_STATS_SCHEMA, client)
+            bilan["objets"] = len({ligne["item_id"] for ligne in lignes})
+            bilan["stats"] = len(lignes)
+        if ITEM_GROUPS_TABLE in manquantes:
+            groupes = flatten_item_groups(patch, fichier)
+            load_rows(groupes, ITEM_GROUPS_TABLE, ITEM_GROUPS_SCHEMA, client)
+            bilan["groupes"] = len(groupes)
+        journal.info("objets %s : %s", patch, bilan)
         bilans.append(bilan)
     return bilans
 

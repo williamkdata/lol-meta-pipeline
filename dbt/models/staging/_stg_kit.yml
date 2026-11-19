@@ -56,6 +56,23 @@ models:
           arguments:
             combination_of_columns: [patch_key, item_id, stat]
 
+  - name: stg_item_groups
+    description: >
+      Un groupe par patch et par objet (19/11/2026). max_ownable : combien
+      d'objets du groupe on peut avoir (vide = pas de limite). Le moteur de
+      build ne doit jamais proposer deux objets d'un groupe limite a 1.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [patch_key, item_id, item_group]
+    columns:
+      - name: patch_key
+        data_tests: [not_null]
+      - name: item_id
+        data_tests: [not_null]
+      - name: item_group
+        data_tests: [not_null]
+
   - name: stg_kit__champion_record
     description: >
       La fiche du champion (fichier du jeu) : une stat par patch, champion et
@@ -162,3 +179,21 @@ unit_tests:
     expect:
       rows:
         - {patch_key: 1623, value: 0.7}
+
+  # Les groupes d'objets (19/11/2026) : un objet qui cite deux fois le meme
+  # groupe dans le fichier du jeu (443061, mode Arena) n'a qu'une ligne. Le
+  # Lord Dominik est dans LastWhisper (1 au plus) et Default (sans limite).
+  - name: item_groups_keep_one_row_per_patch_item_and_group
+    model: stg_item_groups
+    given:
+      - input: source('lol_raw', 'item_groups')
+        rows:
+          - {patch: '16.23', item_id: 3036, item_group: LastWhisper, max_ownable: 1, group_defined: true}
+          - {patch: '16.23', item_id: 3036, item_group: Default, max_ownable: null, group_defined: true}
+          - {patch: '16.23', item_id: 443061, item_group: PrismaticTankItems, max_ownable: 1, group_defined: true}
+          - {patch: '16.23', item_id: 443061, item_group: PrismaticTankItems, max_ownable: 1, group_defined: true}
+    expect:
+      rows:
+        - {patch_key: 1623, item_id: 3036, item_group: LastWhisper, max_ownable: 1}
+        - {patch_key: 1623, item_id: 3036, item_group: Default, max_ownable: null}
+        - {patch_key: 1623, item_id: 443061, item_group: PrismaticTankItems, max_ownable: 1}

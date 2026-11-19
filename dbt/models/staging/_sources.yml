@@ -40,6 +40,17 @@ sources:
           (CommunityDragon, items.cdtb.bin.json) : plus complet que Data Dragon
           (acceleration de competence), identique la ou les deux se recoupent.
 
+      - name: item_groups
+        description: >
+          Les groupes de chaque objet, par patch (meme fichier que item_stats,
+          19/11/2026) : le jeu limite certains cumuls (max_ownable : un seul
+          objet du groupe LastWhisper...). Vide = pas de limite.
+          group_defined = faux si le groupe est cite mais introuvable. Le brut
+          garde tout ce que dit le fichier, y compris un groupe cite deux fois
+          par un meme objet (443061, mode Arena). Avant que CommunityDragon
+          retrouve un nom, le groupe porte son empreinte FNV-1a
+          ({321e09b4} = PrismaticTankItems jusqu'au 16.19).
+
       - name: kit_formulas
         description: >
           Une formule de sort par patch, champion et touche (Q, W, E, R, P),
