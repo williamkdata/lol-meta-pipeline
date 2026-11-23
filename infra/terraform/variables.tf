@@ -48,12 +48,14 @@ variable "alerte_courriel" {
 # vitesse d'attaque, critique et letalite dans le moteur theorique ; groupes
 # d'objets charges). 3 : 19/11/2026 (regle "sans la survie" du moteur
 # theorique). 4 : 20/11/2026 (commit 0bf18a8 : valeur survie separee).
-# Revenir en arriere : remettre l'ancienne valeur et apply. L'etagere garde
-# les 3 dernieres images : l'image 1 en sort avec l'arrivee de la 4.
+# 5 : 23/11/2026 (commit 32e743d : garde-fou des infobulles, apercu du PBE
+# avec ses infobulles). Revenir en arriere : remettre l'ancienne valeur et
+# apply. L'etagere garde les 3 dernieres images : la 1 est sortie avec la 4,
+# la 2 sort avec la 5.
 variable "job_image_tag" {
   description = "La version de l'image du job a lancer (etiquette sur l'etagere lol-job)."
   type        = string
-  default     = "4"
+  default     = "5"
 }
 
 variable "ladder_retention_days" {
