@@ -61,6 +61,7 @@ API Riot ─────────┘    brut gzip,        lol_raw (permanent)
 | 9 | Coûts mesurés, limites, bilan | ✅ |
 | 10 | Collecte sortie du PC : job Cloud Run + Cloud Scheduler + Secret Manager + alerte, en Terraform | ✅ 18/11 |
 | 11 | Aperçu du PBE et prédictions datées avant la sortie d'un patch | ✅ 18/11 (première prédiction) |
+| 12 | Assistant local (modèle de langage sur le PC, Ollama) branché sur les marts par des outils testés | ✅ 23/11 (premiers essais) |
 
 ## Les marts
 
@@ -163,6 +164,22 @@ Le bulletin juge le moteur théorique **après** un patch. Le PBE, le serveur de
 - **Des prédictions datées, jugées d'après une règle fixée d'avance.** Chaque aperçu ajoute une section à `predictions/<patch>.md` : date, version exacte du PBE, ce qui change, la prédiction, et ce qu'on peut espérer trancher. Le juge est `mart_patch_experiments` (part de jeu et victoires, fourchettes de Wilson séparées, référence « rien ne change »). On ne réécrit jamais une prédiction passée.
 - **Premier aperçu (18/11, 16.24)** : le cycle de test commence, **un seul champion change** (Akshan : ratio d'AD du Q 0,70 → 0,80), aucun objet. Contrôle dans BigQuery : formules et objets identiques au 16.23, 6 valeurs de plus (Akshan). **Prédiction : Akshan en hausse (+3,7 % de valeur pour ses objets).** Akshan est rare (0,35 % des joueurs au 16.22) : sa part de jeu pourra se juger (fourchette ~±0,03 point sur un patch complet), son taux de victoire probablement pas (~±5 points).
 - **Deuxième aperçu (20/11, nouvelle version du PBE)** : toujours le seul Q d'Akshan. **Prédiction : hausse, +4,3 %** : même changement, mais le moteur a changé entre-temps (nouveaux codes de stats, survie à part), la base de sa valeur dégâts est plus petite. **Un défaut trouvé avant d'écrire la prédiction** : le premier calcul donnait 77 prédictions, presque toutes en hausse (Shen +1 402 %), sur les champions à boucliers et soins. L'aperçu ne chargeait pas les infobulles du PBE (inutiles avant la valeur survie) : aucune formule n'était reconnue comme de la survie, toute la survie passait dans les dégâts, et le build restait vert. Corrigé : l'aperçu charge les infobulles du PBE (34 659 lignes), tests d'abord, 4 sabotages attrapés. Et un **garde-fou** fait maintenant échouer le build si un patch a des formules sans infobulles (vérifié : il attrape l'aperçu fautif ; en prod, 23 patches sur 23 ont leurs infobulles). **En prod depuis le 23/11 (image `5`)**, avant la sortie du 16.24 : si les infobulles d'un nouveau patch manquaient, le run échouerait et l'alerte partirait, au lieu de publier des prédictions fausses.
+
+## Un assistant local qui lit les marts
+
+Un modèle de langage tourne **sur le PC** (Qwen3 4B, via Ollama, 3,9 Go, entièrement sur la carte graphique) : aucun appel payant, aucune donnée ne sort. Il répond aux questions d'un joueur en appelant des **outils** (`assistant/outils.py`), des fonctions Python testées qui lisent les marts de prod :
+
+- `changements_du_patch(patch)` : ce que le moteur théorique a prédit pour un patch, et ce que le ladder en a dit ;
+- `builds_du_champion(champion, patch, poste)` : les familles de builds (parties, popularité, victoires avec leur fourchette, objets les plus fréquents).
+
+Les règles, chacune née d'un essai mesuré (23/11) :
+- **le texte du modèle n'entre jamais dans le SQL** : le patch, le champion, le poste passent par des paramètres de requête (un nom piégé reste une valeur) ;
+- **chaque chiffre arrive avec sa définition** ; une liste vide arrive avec une remarque (sinon le modèle comble le vide) ;
+- **ce qui doit être juste se calcule, le modèle ne fait que rédiger** : il confondait les codes de verdict (la part de jeu et les victoires, « confirmé » et « même sens ») ; il reçoit maintenant une phrase déjà interprétée et testée (« Part de jeu : 1,57 % -> 2,47 %, en hausse comme prédit, et c'est prouvé ») ; les familles arrivent avec leur nom en clair et leurs objets (il décrivait « hybride » comme « dégâts et survie » ; c'est Manamune + Horizon Focus pour Ezreal) ;
+- **deux blocs** : le résumé du modèle, puis le **détail vérifié**, mis en forme et recopié par le programme ; **température 0** : la même question donne la même réponse, deux essais se comparent ;
+- une erreur d'outil (patch illisible, poste inconnu) revient au modèle, qui peut corriger sa demande ; au plus 4 tours d'outils.
+
+Mesuré sur la même question (« qu'est-ce qui a changé au 16.23 ? »), chaque résumé relu phrase par phrase contre les chiffres : **4 erreurs** avec les codes bruts, **1** avec les phrases de verdict, puis **1, et une réponse identique d'un essai à l'autre** avec la température à 0. Sur les builds d'Ezreal : objets et taux justes, plus aucune description inventée après le nom des familles en clair. 15 à 47 s par question.
 
 ## Choix notables
 
@@ -273,6 +290,7 @@ Volume par partie du ladder, mesuré sur le premier run réel : ~70 Ko dans BigQ
 - **Le simulateur ne connaît pas encore les effets des objets**, ni les sorts à plusieurs coups ou sur la durée ; dégâts moyens (le critique compte en moyenne), sans le temps d'armer le premier coup ni la régénération de la cible. La pénétration suit le wiki, sans mesure possible avec nos données. Restent non décodés : la vitesse d'attaque totale (4, 0), la vitesse de déplacement (7) et quelques codes rares. L'anomalie du Q de Lissandra et de Kennen (~0,27 du prédit) venait de la vérification, pas du simulateur : elle comparait au Q d'autres effets rangés dans le même emplacement (corrigé le 23/11). Reconnu par son nom, le Q de Lissandra est à 0,90 sur 3 coups seulement, et celui de Kennen n'a aucun coup sans pénétration : ni l'un ni l'autre n'est encore validé. Le mana bonus et la progression par niveau ne sont pas encore validés sur de vrais coups (trop peu de coups simples).
 - **Les groupes d'objets sont chargés, mais aucun build ne les vérifie encore** : le jeu interdit certains cumuls. Au 16.23, le groupe « Dernier souffle » (un seul objet) compte 7 objets, dont le **Couperet noir**, exclusif avec Lord Dominik ; une seule paire de bottes parmi 22. Chargés depuis le 19/11 avec les stats des objets (table par table : 23 patches, 42 129 lignes, 0 groupe introuvable), dans `stg_item_groups`. Un groupe dont CommunityDragon ne connaît pas encore le nom porte son empreinte : `{321e09b4}` jusqu'au 16.19, puis `PrismaticTankItems` (vérifié : c'est bien l'empreinte de ce chemin). Le moteur de build devra s'en servir pour ne jamais proposer un build impossible.
 - **Les verdicts du bulletin sont instables en début de patch** : beaucoup de duels se renversent en un ou deux jours. Ils ne doivent pas être montrés aux joueurs avant d'avoir tenu dans la durée.
+- **Le résumé de l'assistant peut encore se tromper** (1 erreur sur 8 champions à la dernière mesure, une phrase de raisonnement fausse sur les builds) : c'est le **détail vérifié** qui fait foi. L'assistant ne tourne que sur le PC (Ollama), pas dans le cloud. Une question sur les builds lit ~450 Mo dans BigQuery (une vue refait son calcul) : ~0,04 % du gratuit mensuel ; une table précalculée le ramènerait à quelques Mo.
 - **La famille d'un objet ne dépend pas de qui l'achète.** La Force de la trinité est un objet de combattant : le build d'Ezreal (Trinité, Manamune, Faim insatiable) est donc classé « combattant », alors qu'un joueur dirait « Ezreal Manamune ». Choix assumé (la règle qui corrigeait ce cas en cassait d'autres).
 - **Peu de choix par champion pour l'instant** : au 16.22, après le run du 06/11, 42 couples champion × poste ont deux familles à 10 parties ou plus, et 2 en ont trois (Jax TOP : combattant, AP, hybride ; Sona support : enchanteur, tank, AP). La veille, 16 couples en avaient deux et aucun trois. Ce n'est pas l'algorithme mais le volume : il grandit chaque jour.
 - **Un poste peut manquer.** Riot laisse le poste vide quand il ne sait pas déduire le rôle d'un joueur (1 ligne sur 2 890 au 03/11, dans une partie finie à 15 min 32 s). Un test le signale en avertissement ; la mart des matchups écarte d'elle-même le duel concerné.
@@ -294,9 +312,12 @@ dbt/              staging (vues) -> intermédiaire (vues) -> marts (tables), see
                   noms des champs de la fiche), macros, tests de données
 simulateur/       simulateur de combat (Python pur) : degats, stats avec objets,
                   temps pour tuer le mannequin, formules des sorts, coup de sort entier
-tests/            pytest hors ligne : faux clients HTTP, BigQuery et Storage ;
+assistant/        l'assistant local : outils.py (les outils qui lisent les marts, avec
+                  leurs définitions et les phrases de verdict) ; conversation.py (la
+                  boucle avec Ollama, le détail vérifié, le lanceur)
+tests/            pytest hors ligne : faux clients HTTP, BigQuery, Storage et Ollama ;
                   fonctions du simulateur
-prototypes/       essais : LLM local (Ollama) qui appelle un outil sur un mart ;
+prototypes/       essais : le premier LLM local du 05/11 (remplacé par assistant/) ;
                   pré-classement des familles d'objets avant relecture
 ```
 
@@ -319,6 +340,12 @@ Prédire le prochain patch (à la main) :
 ```bash
 uv run python ingestion/pbe.py
 cd dbt && uv run dbt build --target pbe --select +mart_patch_predictions --exclude "test_type:unit" --indirect-selection cautious --profiles-dir profiles
+```
+
+Poser une question à l'assistant (Ollama lancé sur le PC, avec le modèle `hf.co/Qwen/Qwen3-4B-GGUF:Q4_K_M`) :
+
+```bash
+uv run python assistant/conversation.py "Quels builds pour Ezreal en adc ?"
 ```
 
 ## Attribution et conditions d'utilisation

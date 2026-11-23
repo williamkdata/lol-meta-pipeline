@@ -79,13 +79,17 @@ class FakeBigQuery:
         self.appels = []
         self.job = None
         self.requetes = []
+        # Les reglages de chaque requete (ses parametres), dans l'ordre : None
+        # quand la requete n'en a pas (23/11/2026, outils de l'assistant).
+        self.configs = []
         self._resultat_requete = resultat_requete or []
         self._table_absente = table_absente
 
-    def query(self, sql):
+    def query(self, sql, job_config=None):
         """Une requete SQL : renvoie les lignes reglees a l'avance, ou leve
         NotFound pour simuler une table qui n'existe pas encore."""
         self.requetes.append(sql)
+        self.configs.append(job_config)
         if self._table_absente:
             from google.api_core.exceptions import NotFound
 

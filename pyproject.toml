@@ -17,7 +17,7 @@ line-length = 88
 # ingestion/ et simulateur/ parmi les bibliotheques externes et range mal les
 # imports.
 # Meme dossier que le pythonpath de pytest, plus bas.
-src = ["ingestion", "simulateur", "tests"]
+src = ["ingestion", "simulateur", "assistant", "tests"]
 
 [tool.ruff.lint]
 # F  : erreurs reelles (import inutilise, variable non definie)
@@ -30,7 +30,7 @@ src = ["ingestion", "simulateur", "tests"]
 select = ["F", "E", "W", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.pytest.ini_options]
-pythonpath = ["ingestion", "simulateur"]
+pythonpath = ["ingestion", "simulateur", "assistant"]
 testpaths = ["tests"]
 
 [dependency-groups]
