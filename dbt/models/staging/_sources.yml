@@ -80,6 +80,11 @@ sources:
         description: Apercu du PBE, memes colonnes que kit_formula_parts.
       - name: pbe_item_stats
         description: Apercu du PBE, memes colonnes que item_stats.
+      - name: pbe_kit_spell_tooltips
+        description: >
+          Apercu du PBE, memes colonnes que kit_spell_tooltips (20/11/2026) :
+          sans les infobulles, la valeur survie du moteur theorique ne sait
+          pas quelle formule est un bouclier ou un soin.
 
       - name: kit_champion_record
         description: >

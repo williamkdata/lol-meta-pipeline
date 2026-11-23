@@ -7,7 +7,7 @@ from google.cloud import bigquery
 
 from fakes import FakeBigQuery, FakeHttp, FakeResponse
 from item_stats import ITEM_STATS_SCHEMA, flatten_item_stats, item_stats_url
-from kits import KIT_SCHEMAS, champion_file_url, kit_rows
+from kits import KIT_SCHEMAS, champion_file_url, game_texts_url, kit_rows
 from pbe import (
     PBE_METADONNEES_URL,
     PBE_TABLES,
@@ -19,7 +19,7 @@ from pbe import (
 # Les memes fichiers de jeu que les tests des kits et des objets : un vrai
 # fichier d'Ambessa et le Couperet noir, pas une copie qui pourrait diverger.
 from test_item_stats import OBJETS
-from test_kits import kit_ambessa
+from test_kits import TEXTES_16_21, kit_ambessa
 
 # Le fichier content-metadata.json du dossier pbe de CommunityDragon, tel qu'il
 # etait le 18/11/2026 (le 16.23 venait de sortir, le PBE testait le 16.24).
@@ -41,11 +41,16 @@ def test_an_unreadable_version_is_refused():
         pbe_patch({"version": "branch.main.content.beta"})
 
 
-def serveur_pbe(champions_presents=("Ambessa",), objets=True):
+def serveur_pbe(champions_presents=("Ambessa",), objets=True, textes=True):
     """Un faux CommunityDragon : le dossier pbe repond pour les champions
-    presents et pour les objets ; tout le reste repond 404."""
+    presents, pour les objets et pour le texte du jeu (les infobulles) ; tout
+    le reste repond 404."""
     http = FakeHttp()
     http.reponse = FakeResponse(status_code=404)
+    if textes:
+        http.reponses[game_texts_url("pbe")] = FakeResponse(
+            {"entries": TEXTES_16_21, "version": "test"}
+        )
     for code in champions_presents:
         http.reponses[champion_file_url("pbe", code)] = FakeResponse(kit_ambessa())
     if objets:
@@ -59,6 +64,7 @@ def test_the_preview_is_downloaded_from_the_pbe_folder():
     pbe_preview_rows("16.24", [(799, "Ambessa")], http)
 
     assert [url for url, _ in http.appels] == [
+        game_texts_url("pbe"),
         champion_file_url("pbe", "Ambessa"),
         item_stats_url("pbe"),
     ]
@@ -67,7 +73,7 @@ def test_the_preview_is_downloaded_from_the_pbe_folder():
 def test_every_preview_row_carries_the_real_patch_name():
     lignes = pbe_preview_rows("16.24", [(799, "Ambessa")], serveur_pbe())
 
-    for table in ("values", "parts", "item_stats"):
+    for table in ("values", "parts", "tooltips", "item_stats"):
         assert lignes[table], f"aucune ligne dans {table} : le test ne prouverait rien"
         assert {ligne["patch"] for ligne in lignes[table]} == {"16.24"}
 
@@ -77,10 +83,21 @@ def test_preview_rows_are_those_of_a_normal_patch_except_the_folder():
     # doit differer d'un vrai patch que par l'endroit ou il est telecharge.
     lignes = pbe_preview_rows("16.24", [(799, "Ambessa")], serveur_pbe())
 
-    kit = kit_rows("16.24", 799, "Ambessa", kit_ambessa(), None)
+    kit = kit_rows("16.24", 799, "Ambessa", kit_ambessa(), TEXTES_16_21)
     assert lignes["values"] == kit["values"]
     assert lignes["parts"] == kit["parts"]
+    assert lignes["tooltips"] == kit["tooltips"]
     assert lignes["item_stats"] == flatten_item_stats("16.24", OBJETS)
+
+
+def test_the_preview_knows_which_formulas_are_shields():
+    # Les infobulles disent quelle formule est un bouclier ou un soin : sans
+    # elles, le moteur theorique range toute la survie dans les degats (vu le
+    # 20/11 : 77 fausses predictions au 16.24, Shen +1 402 %).
+    lignes = pbe_preview_rows("16.24", [(799, "Ambessa")], serveur_pbe())
+
+    balises = {(ligne["name"], ligne["tag"]) for ligne in lignes["tooltips"]}
+    assert ("calc_shield", "shield") in balises
 
 
 def test_a_champion_missing_from_the_pbe_is_skipped():
@@ -118,7 +135,7 @@ def bigquery_au_16_23():
     return FakeBigQuery(resultat_requete=[{"patch": "16.22"}, {"patch": "16.23"}])
 
 
-def test_the_preview_replaces_the_three_pbe_tables():
+def test_the_preview_replaces_the_four_pbe_tables():
     client = bigquery_au_16_23()
 
     load_pbe_preview(VERSIONS_DD, serveur_complet(), client)
@@ -127,6 +144,7 @@ def test_the_preview_replaces_the_three_pbe_tables():
     assert destinations == [
         PBE_TABLES["values"],
         PBE_TABLES["parts"],
+        PBE_TABLES["tooltips"],
         PBE_TABLES["item_stats"],
     ]
     # Jamais les vraies tables : le vrai 16.24 serait ignore a sa sortie.
@@ -141,7 +159,12 @@ def test_the_preview_tables_use_the_schemas_of_the_real_tables():
     load_pbe_preview(VERSIONS_DD, serveur_complet(), client)
 
     schemas = [config.schema for _, _, config in client.appels]
-    assert schemas == [KIT_SCHEMAS["values"], KIT_SCHEMAS["parts"], ITEM_STATS_SCHEMA]
+    assert schemas == [
+        KIT_SCHEMAS["values"],
+        KIT_SCHEMAS["parts"],
+        KIT_SCHEMAS["tooltips"],
+        ITEM_STATS_SCHEMA,
+    ]
 
 
 def test_nothing_is_loaded_once_the_patch_is_out():
@@ -167,6 +190,18 @@ def test_an_empty_preview_is_refused_before_loading_anything():
     assert client.appels == []
 
 
+def test_the_preview_is_refused_without_the_game_text_of_the_pbe():
+    # Sans le texte du jeu, aucune infobulle : toute la survie passerait dans
+    # les degats. Refuse avant tout chargement, comme un apercu vide.
+    client = bigquery_au_16_23()
+    http = serveur_complet()
+    del http.reponses[game_texts_url("pbe")]
+
+    with pytest.raises(ValueError, match="tooltips"):
+        load_pbe_preview(VERSIONS_DD, http, client)
+    assert client.appels == []
+
+
 def test_the_report_gives_the_patch_the_pbe_build_and_the_row_counts():
     attendu = pbe_preview_rows("16.24", [(799, "Ambessa")], serveur_pbe())
 
@@ -178,5 +213,6 @@ def test_the_report_gives_the_patch_the_pbe_build_and_the_row_counts():
         "statut": "charge",
         "values": len(attendu["values"]),
         "parts": len(attendu["parts"]),
+        "tooltips": len(attendu["tooltips"]),
         "item_stats": len(attendu["item_stats"]),
     }

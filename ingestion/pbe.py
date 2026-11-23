@@ -24,6 +24,7 @@ from kits import (
     TIMEOUT_S,
     champion_file_url,
     champions_of,
+    fetch_game_texts,
     kit_rows,
     loaded_kit_patches,
 )
@@ -35,14 +36,19 @@ PBE_METADONNEES_URL = f"{CDRAGON_URL}/{PBE_DOSSIER}/content-metadata.json"
 
 # Des tables A PART, a cote des vraies, avec les memes schemas. Chargees dans
 # cet ordre ; remplacees a chaque fois (une seule version du PBE a la fois).
+# Les infobulles depuis le 20/11/2026 : elles disent quelle formule est un
+# bouclier ou un soin (valeur survie du moteur theorique). Sans elles, toute
+# la survie passait dans les degats : 77 fausses predictions au 16.24.
 PBE_TABLES = {
     "values": f"{KIT_DATASET}.pbe_kit_data_values",
     "parts": f"{KIT_DATASET}.pbe_kit_formula_parts",
+    "tooltips": f"{KIT_DATASET}.pbe_kit_spell_tooltips",
     "item_stats": f"{KIT_DATASET}.pbe_item_stats",
 }
 PBE_SCHEMAS = {
     "values": KIT_SCHEMAS["values"],
     "parts": KIT_SCHEMAS["parts"],
+    "tooltips": KIT_SCHEMAS["tooltips"],
     "item_stats": ITEM_STATS_SCHEMA,
 }
 
@@ -58,8 +64,8 @@ def pbe_patch(metadonnees: dict) -> str:
 
 
 def pbe_preview_rows(patch: str, champions, session) -> dict[str, list[dict]]:
-    """Les lignes de l'apercu : valeurs et morceaux de formules de chaque
-    champion, stats des objets. Telechargees dans le dossier pbe, mais
+    """Les lignes de l'apercu : valeurs, morceaux de formules et infobulles
+    de chaque champion, stats des objets. Telechargees dans le dossier pbe, mais
     etiquetees du vrai patch ("16.24") : les modeles dbt les traitent alors
     comme un patch ordinaire.
 
@@ -70,7 +76,11 @@ def pbe_preview_rows(patch: str, champions, session) -> dict[str, list[dict]]:
     Un champion absent du PBE (404) est saute. Les objets absents, eux,
     arretent tout : sans eux, aucun objet ne paraitrait change, et les
     predictions seraient fausses sans le dire."""
-    lignes = {"values": [], "parts": [], "item_stats": []}
+    lignes = {"values": [], "parts": [], "tooltips": [], "item_stats": []}
+    # Le texte du jeu du PBE (~32 Mo), une seule fois pour tous les champions.
+    # None s'il manque (404) : alors aucune infobulle, et load_pbe_preview
+    # refuse l'apercu (table vide).
+    textes = fetch_game_texts(PBE_DOSSIER, session)
     absents = []
     for champion_id, code in champions:
         reponse = session.get(champion_file_url(PBE_DOSSIER, code), timeout=TIMEOUT_S)
@@ -78,11 +88,12 @@ def pbe_preview_rows(patch: str, champions, session) -> dict[str, list[dict]]:
             absents.append(code)
             continue
         reponse.raise_for_status()
-        # None : pas de texte du jeu, l'apercu n'a besoin ni des infobulles
-        # ni des formules entieres.
-        kit = kit_rows(patch, champion_id, code, reponse.json(), None)
+        # Les formules entieres ne sont pas gardees : l'apercu n'en a pas
+        # besoin (elles servent a reconnaitre les formules renommees).
+        kit = kit_rows(patch, champion_id, code, reponse.json(), textes)
         lignes["values"].extend(kit["values"])
         lignes["parts"].extend(kit["parts"])
+        lignes["tooltips"].extend(kit["tooltips"])
     if absents:
         journal.warning("PBE : %d champions absents : %s", len(absents), absents)
 

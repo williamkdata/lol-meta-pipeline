@@ -164,6 +164,26 @@ unit_tests:
         - {patch_key: 1623, value: 0.7}
         - {patch_key: 1624, value: 0.8}
 
+  # Les infobulles aussi (20/11/2026) : elles disent quelle formule est un
+  # bouclier. Sans celles du PBE, la valeur survie du 16.24 etait vide et toute
+  # la survie passait dans les degats (77 fausses predictions, Shen +1 402 %).
+  # Bouclier du W d'Ambessa, au 16.23 et au PBE du 16.24.
+  - name: tooltips_add_the_pbe_preview_as_an_ordinary_patch
+    model: stg_kit__spell_tooltips
+    overrides:
+      vars: {pbe_preview: true}
+    given:
+      - input: source('lol_raw', 'kit_spell_tooltips')
+        rows:
+          - {patch: '16.23', champion_id: 799, champion_code: Ambessa, slot: W, spell_name: AmbessaW, name: calc_shield, tag: shield}
+      - input: source('lol_raw', 'pbe_kit_spell_tooltips')
+        rows:
+          - {patch: '16.24', champion_id: 799, champion_code: Ambessa, slot: W, spell_name: AmbessaW, name: calc_shield, tag: shield}
+    expect:
+      rows:
+        - {patch_key: 1623, name: calc_shield, tag: shield}
+        - {patch_key: 1624, name: calc_shield, tag: shield}
+
   # Hors mode apercu (dev, prod, run quotidien) : la vraie table seule. Aucune
   # entree pour la table du PBE : si la macro y touchait, dbt la reclamerait.
   - name: values_read_only_the_real_table_outside_preview_mode

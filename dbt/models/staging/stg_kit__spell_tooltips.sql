@@ -21,7 +21,9 @@ SELECT
     -- est. Ajoutes le 18/11/2026 (table rechargee le jour meme).
     following_text
 
-FROM {{ source('lol_raw', 'kit_spell_tooltips') }}
+-- En mode apercu (cible pbe), les infobulles du PBE s'ajoutent comme un patch
+-- ordinaire (20/11/2026) : la valeur survie du moteur theorique en a besoin.
+FROM {{ source_avec_apercu_pbe('kit_spell_tooltips', 'pbe_kit_spell_tooltips') }}
 
 -- Les entrees speciales Jade_ du 16.15 : meme filtre que pour les champions.
 WHERE STRPOS(champion_code, '_') = 0
