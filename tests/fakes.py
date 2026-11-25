@@ -3,6 +3,8 @@
 Chacun note ce qu'on lui demande et renvoie ce qu'on a regle a l'avance.
 """
 
+import copy
+
 import requests
 
 
@@ -168,3 +170,19 @@ class FakeLimiter:
 
     def marquer_retour(self):
         self.retours += 1
+
+
+class FakeOllama:
+    """Le serveur Ollama : chaque POST recoit la reponse suivante de la liste
+    (un message du modele). On garde ce qui a ete envoye."""
+
+    def __init__(self, messages, status_code=200):
+        self._messages = list(messages)
+        self._status_code = status_code
+        self.envois = []
+
+    def post(self, url, json=None, timeout=None):
+        # Une COPIE de ce qui part : un vrai envoi HTTP fige les messages au
+        # moment de l'appel, alors que la liste continue de grandir ensuite.
+        self.envois.append((url, copy.deepcopy(json)))
+        return FakeResponse({"message": self._messages.pop(0)}, self._status_code)

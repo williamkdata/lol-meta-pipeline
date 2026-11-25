@@ -297,22 +297,31 @@ def detail_verifie(journal: list) -> str:
     return "\n".join(lignes)
 
 
-if __name__ == "__main__":
-    # A lancer a la main, depuis la racine du depot :
-    #   python assistant/conversation.py "Quels builds pour Ezreal en adc ?"
-    client = bigquery.Client(project=PROJET)
-    # functools.partial : chaque outil avec son client BigQuery deja rempli ; le
-    # modele ne fournit que ses propres arguments (patch, champion, poste).
-    outils_prets = {
+def outils_prets(client) -> dict:
+    """Chaque outil avec son client BigQuery deja rempli (functools.partial) :
+    le modele ne fournit que ses propres arguments (patch, champion, poste).
+    Partage par le lanceur et le banc d'essai (evaluation.py) : un seul
+    endroit a modifier quand un outil arrive."""
+    return {
         "changements_du_patch": functools.partial(changements_du_patch, client=client),
         "builds_du_champion": functools.partial(builds_du_champion, client=client),
         "bulletin_du_patch": functools.partial(bulletin_du_patch, client=client),
         "objets_du_champion": functools.partial(objets_du_champion, client=client),
     }
+
+
+if __name__ == "__main__":
+    # A lancer a la main, depuis la racine du depot :
+    #   python assistant/conversation.py "Quels builds pour Ezreal en adc ?"
+    client = bigquery.Client(project=PROJET)
     question = " ".join(sys.argv[1:]) or "Qu'est-ce qui a change au dernier patch ?"
     journal = []
     resume = repondre(
-        question, requests.Session(), outils_prets, dernier_patch(client), journal
+        question,
+        requests.Session(),
+        outils_prets(client),
+        dernier_patch(client),
+        journal,
     )
     # Deux blocs : le resume redige par le modele, puis le detail calcule et
     # recopie par le programme (les chiffres garantis).

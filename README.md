@@ -177,6 +177,8 @@ Un modèle de langage tourne **sur le PC** (Qwen3 4B, via Ollama, 3,9 Go, entiè
 
 **La version d'Ollama est fixée (0.40.16, mise à jour automatique coupée)** : le 25/11, Ollama s'est mis à jour seul en 0.40.18, et le modèle n'appelait plus ses outils (il « réfléchissait à voix haute » en anglais, inventait des noms d'outils et un patch « 11.23 »). Les notes de version officielles expliquent pourquoi : la consigne de ne pas réfléchir et la description des outils ne lui parviennent plus de la même façon. Retour à la 0.40.16 (installateur officiel, empreinte et signature vérifiées) : les outils sont de nouveau appelés. Comme uv et dbt, un outil dont dépend le projet a sa version fixée ; « même question, même réponse » (température 0) n'est vrai qu'à version égale.
 
+**Un banc d'essai** (`assistant/evaluation.py`), né de cet incident : quatre questions fixes, une par outil, posées au vrai modèle ; pour chacune, l'outil et les arguments attendus. On ne juge pas le texte (il peut varier), on juge **l'appel d'outil** (il doit être exact). Code de sortie 1 au moindre échec. Avec la 0.40.16 : **4 sur 4**. À lancer avant toute mise à jour d'Ollama ou du modèle.
+
 Les règles, chacune née d'un essai mesuré (23-25/11) :
 - **le texte du modèle n'entre jamais dans le SQL** : le patch, le champion, le poste passent par des paramètres de requête (un nom piégé reste une valeur) ;
 - **chaque chiffre arrive avec sa définition** ; une liste vide arrive avec une remarque (sinon le modèle comble le vide) ;
@@ -319,7 +321,8 @@ simulateur/       simulateur de combat (Python pur) : degats, stats avec objets,
                   temps pour tuer le mannequin, formules des sorts, coup de sort entier
 assistant/        l'assistant local : outils.py (les outils qui lisent les marts, avec
                   leurs définitions et les phrases de verdict) ; conversation.py (la
-                  boucle avec Ollama, le détail vérifié, le lanceur)
+                  boucle avec Ollama, le détail vérifié, le lanceur) ; evaluation.py
+                  (le banc d'essai : une question par outil, l'appel attendu)
 tests/            pytest hors ligne : faux clients HTTP, BigQuery, Storage et Ollama ;
                   fonctions du simulateur
 prototypes/       essais : le premier LLM local du 05/11 (remplacé par assistant/) ;
@@ -351,6 +354,12 @@ Poser une question à l'assistant (Ollama **0.40.16** lancé sur le PC, mise à 
 
 ```bash
 uv run python assistant/conversation.py "Quels builds pour Ezreal en adc ?"
+```
+
+Vérifier l'assistant (avant toute mise à jour d'Ollama ou du modèle) :
+
+```bash
+uv run python assistant/evaluation.py
 ```
 
 ## Attribution et conditions d'utilisation

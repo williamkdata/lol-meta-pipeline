@@ -2,7 +2,6 @@
 le modele demande des outils, leurs resultats lui reviennent, puis il repond.
 Aucun vrai modele ici : un faux Ollama rejoue des reponses preparees."""
 
-import copy
 import inspect
 import json
 
@@ -16,25 +15,10 @@ from conversation import (
     SCHEMAS_OUTILS,
     TOURS_MAX,
     detail_verifie,
+    outils_prets,
     repondre,
 )
-from fakes import FakeResponse
-
-
-class FakeOllama:
-    """Le serveur Ollama : chaque POST recoit la reponse suivante de la liste
-    (un message du modele). On garde ce qui a ete envoye."""
-
-    def __init__(self, messages, status_code=200):
-        self._messages = list(messages)
-        self._status_code = status_code
-        self.envois = []
-
-    def post(self, url, json=None, timeout=None):
-        # Une COPIE de ce qui part : un vrai envoi HTTP fige les messages au
-        # moment de l'appel, alors que la liste continue de grandir ensuite.
-        self.envois.append((url, copy.deepcopy(json)))
-        return FakeResponse({"message": self._messages.pop(0)}, self._status_code)
+from fakes import FakeOllama
 
 
 def texte(contenu):
@@ -524,3 +508,11 @@ def test_one_game_is_written_in_the_singular():
     detail = detail_verifie([("builds_du_champion", ARGS_EZREAL, resultat)])
 
     assert "critique : 1 partie (" in detail
+
+
+def test_every_tool_offered_to_the_model_is_ready():
+    # Un outil decrit au modele mais oublie dans outils_prets : le modele
+    # pourrait le demander, le lanceur ne l'aurait pas.
+    noms = {schema["function"]["name"] for schema in SCHEMAS_OUTILS}
+
+    assert set(outils_prets(client=None)) == noms
