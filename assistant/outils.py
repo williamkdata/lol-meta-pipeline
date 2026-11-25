@@ -124,6 +124,12 @@ def phrase_du_verdict(ligne: dict) -> str:
     )
 
 
+def nombre_de_parties(n: int) -> str:
+    """ "1 partie", "821 parties" : l'accord au singulier (essai du 25/11 :
+    « 1 parties »). Partage par la phrase des builds et le detail verifie."""
+    return "1 partie" if n == 1 else f"{n} parties"
+
+
 def _cle_du_patch(patch: str) -> int:
     """ "16.23" -> 1623, la cle de tout le projet. Leve ValueError si le texte
     n'est pas un patch."""
@@ -226,7 +232,21 @@ FAMILLES_EN_CLAIR = {
     "hybride": "hybride (ni majorite AD ni majorite AP : objets AD et AP melanges)",
 }
 
+# Ce que veut dire chaque verdict du duel du bulletin (mart_ladder_build_duels),
+# en mots.
+_DUELS = {
+    "populaire_confirme": "la plus jouee est prouvee meilleure que toutes ses "
+    "alternatives",
+    "pepite": "l'alternative est prouvee meilleure que la plus jouee (une "
+    "pepite, a confirmer au patch suivant)",
+    "non_departage": "non departage : les fourchettes se chevauchent, aucune des "
+    "deux n'est prouvee meilleure",
+}
+
 DEFINITIONS_BUILDS = {
+    "resume": "le duel de la famille la plus jouee contre sa meilleure "
+    "alternative, deja juge (fourchettes de Wilson) : reprends-le tel quel et "
+    "n'ajoute aucune conclusion",
     "poste": "le poste de Riot : TOP, JUNGLE, MIDDLE (mid), BOTTOM (adc), "
     "UTILITY (support)",
     "famille": "la famille du build, votee sur ses 3 premiers objets termines "
@@ -314,6 +334,17 @@ def builds_du_champion(
             LEFT JOIN `{PROJET}.{DATASET}.item_families` AS n
                 ON o.item_id = n.item_id
             GROUP BY o.team_position, o.build_family
+        ),
+
+        duels AS (
+            -- Le duel du bulletin (mart_ladder_build_duels) : la famille la plus
+            -- jouee contre sa meilleure alternative, une ligne par poste. Le
+            -- jugement reste dans dbt, un seul endroit.
+            SELECT team_position, popular_option, challenger_option, verdict
+            FROM `{PROJET}.{DATASET}.mart_ladder_build_duels`
+            WHERE patch_key = @patch
+                AND level = 'famille'
+                AND champion_id IN (SELECT champion_id FROM familles)
         )
 
         SELECT
@@ -326,11 +357,16 @@ def builds_du_champion(
             ROUND(f.win_rate_high * 100, 1) AS victoires_haut_pct,
             f.is_choice AS vrai_choix,
             IF(f.is_choice, f.choice_rank, NULL) AS rang_parmi_les_choix,
-            p.objets_principaux
+            p.objets_principaux,
+            d.verdict AS duel_verdict,
+            d.popular_option AS duel_populaire,
+            d.challenger_option AS duel_alternative
         FROM familles AS f
         LEFT JOIN principaux AS p
             ON f.team_position = p.team_position
             AND f.build_family = p.build_family
+        LEFT JOIN duels AS d
+            ON f.team_position = d.team_position
         ORDER BY poste, vrai_choix DESC, rang_parmi_les_choix, parties DESC
         LIMIT {LIGNES_MAX}
     """
@@ -342,14 +378,27 @@ def builds_du_champion(
         ]
     )
     familles = []
+    # Le duel de chaque poste : (verdict, famille la plus jouee, alternative).
+    duels = {}
+    # Chaque famille retrouvee par son poste et son code, pour la phrase.
+    par_code = {}
     for lue in client.query(sql, job_config=config).result():
         # Une copie : la ligne lue reste intacte.
         famille = dict(lue)
+        code = famille["famille"]
+        # pop : la colonne quitte la ligne et sert a la phrase. Le modele ne
+        # recoit que la phrase deja jugee (essai du 25/11 : ses conclusions
+        # libres sur les builds etaient fausses).
+        duel = (
+            famille.pop("duel_verdict", None),
+            famille.pop("duel_populaire", None),
+            famille.pop("duel_alternative", None),
+        )
+        duels.setdefault(famille["poste"], duel)
         # Le nom en clair ; une famille inconnue garde son code (visible, pas
         # perdue).
-        famille["famille"] = FAMILLES_EN_CLAIR.get(
-            famille["famille"], famille["famille"]
-        )
+        famille["famille"] = FAMILLES_EN_CLAIR.get(code, code)
+        par_code[(famille["poste"], code)] = famille
         familles.append(famille)
 
     resultat = {
@@ -363,6 +412,44 @@ def builds_du_champion(
             "aucun build trouve : le nom du champion est peut-etre mal ecrit, ou "
             "il a trop peu de parties a ce patch et a ce poste sur le ladder"
         )
+        return resultat
+
+    def decrit(famille):
+        # "combattant (...), 821 parties, 45,3 % de victoires"
+        victoires = f"{famille['victoires_pct']:.1f}".replace(".", ",")
+        return (
+            f"{famille['famille']}, {nombre_de_parties(famille['parties'])}, "
+            f"{victoires} % de victoires"
+        )
+
+    phrases = [
+        f"Builds de {champion} au patch {patch}, sur le ladder (Challenger et "
+        "Grandmaster EUW)."
+    ]
+    for poste, (verdict, populaire, alternative) in duels.items():
+        if verdict is None:
+            phrases.append(
+                f"{poste} : une seule famille jouee au moins 10 fois, pas de duel."
+            )
+            continue
+        if verdict not in _DUELS:
+            raise ValueError(f"verdict de duel inconnu : {verdict!r}")
+        pop = par_code.get((poste, populaire))
+        alt = par_code.get((poste, alternative))
+        if pop is None or alt is None:
+            # Une famille du duel hors des lignes lues (LIMIT) : le duel sans
+            # chiffres plutot que rien.
+            phrases.append(
+                f"{poste} : duel entre {populaire} et {alternative} ; "
+                f"{_DUELS[verdict]}."
+            )
+            continue
+        phrases.append(
+            f"{poste} : la famille la plus jouee est {decrit(pop)} ; sa meilleure "
+            f"alternative est {decrit(alt)} ; {_DUELS[verdict]}."
+        )
+    phrases.append("La popularite d'une famille ne dit pas sa qualite.")
+    resultat["resume"] = " ".join(phrases)
     return resultat
 
 

@@ -492,3 +492,35 @@ def test_the_items_tool_is_offered_to_the_model():
     noms = {schema["function"]["name"] for schema in SCHEMAS_OUTILS}
 
     assert "objets_du_champion" in noms
+
+
+# --- la phrase des builds (25/11) ------------------------------------------------
+
+
+def test_the_instructions_forbid_a_free_conclusion_on_builds():
+    # Essai du 25/11 : « la theorie predit que combattant est optimal »,
+    # « hybride plus populaire » : faux, et pas dans les chiffres.
+    consignes = consignes_envoyees()
+
+    assert "Pour les builds, n'ajoute aucune conclusion" in consignes
+
+
+def test_the_verified_detail_starts_the_builds_with_the_duel_sentence():
+    avec_resume = {**BUILDS, "resume": "Builds de Ezreal au patch 16.23 (duel)."}
+
+    detail = detail_verifie([("builds_du_champion", ARGS_EZREAL, avec_resume)])
+
+    lignes = detail.splitlines()
+    assert lignes[0] == "Builds de Ezreal au patch 16.23 :"
+    assert lignes[1] == "- Builds de Ezreal au patch 16.23 (duel)."
+    assert lignes[2].startswith("- BOTTOM, hybride : 98 parties")
+
+
+def test_one_game_is_written_in_the_singular():
+    # Essai du 25/11 : « letalite : 1 parties ».
+    une = {**BUILDS["familles"][1], "parties": 1}
+    resultat = {**BUILDS, "familles": [une]}
+
+    detail = detail_verifie([("builds_du_champion", ARGS_EZREAL, resultat)])
+
+    assert "critique : 1 partie (" in detail

@@ -770,3 +770,110 @@ def test_a_champion_without_damage_ratio_says_so():
     )["resume"]
 
     assert "Pour ses degats : aucun ratio de degats." in resume
+
+
+# --- la phrase des builds (le duel du bulletin), 25/11 ---------------------------
+
+COMBATTANT = {
+    "poste": "BOTTOM",
+    "famille": "combattant",
+    "parties": 821,
+    "part_des_parties_pct": 80.4,
+    "victoires_pct": 45.3,
+    "victoires_bas_pct": 41.9,
+    "victoires_haut_pct": 48.7,
+    "vrai_choix": True,
+    "rang_parmi_les_choix": 2,
+    "objets_principaux": [],
+    "duel_verdict": "non_departage",
+    "duel_populaire": "combattant",
+    "duel_alternative": "hybride",
+}
+HYBRIDE = {
+    **COMBATTANT,
+    "famille": "hybride",
+    "parties": 119,
+    "part_des_parties_pct": 11.7,
+    "victoires_pct": 53.8,
+    "victoires_bas_pct": 44.9,
+    "victoires_haut_pct": 62.5,
+    "rang_parmi_les_choix": 1,
+}
+
+
+def resume_des_builds(*lignes):
+    client = FakeBigQuery(resultat_requete=list(lignes))
+    return builds_du_champion("Ezreal", "16.23", client, poste="adc")["resume"]
+
+
+def test_the_builds_read_the_duel_of_the_bulletin():
+    client = FakeBigQuery()
+
+    builds_du_champion("Ezreal", "16.23", client)
+
+    (sql,) = client.requetes
+    assert "lol-meta-pipeline.lol_analytics.mart_ladder_build_duels" in sql
+    assert "level = 'famille'" in sql
+
+
+def test_the_builds_summary_of_ezreal_says_the_duel_is_undecided():
+    # Essai du 25/11 : le modele concluait « la theorie predit combattant »,
+    # « hybride plus populaire ». Le duel du bulletin dit : non departage.
+    assert resume_des_builds(HYBRIDE, COMBATTANT) == (
+        "Builds de Ezreal au patch 16.23, sur le ladder (Challenger et "
+        "Grandmaster EUW). BOTTOM : la famille la plus jouee est combattant "
+        "(objets de combattant : attaque et PV), 821 parties, 45,3 % de "
+        "victoires ; sa meilleure alternative est hybride (ni majorite AD ni "
+        "majorite AP : objets AD et AP melanges), 119 parties, 53,8 % de "
+        "victoires ; non departage : les fourchettes se chevauchent, aucune des "
+        "deux n'est prouvee meilleure. La popularite d'une famille ne dit pas sa "
+        "qualite."
+    )
+
+
+@pytest.mark.parametrize(
+    ("verdict", "texte"),
+    [
+        ("populaire_confirme", "la plus jouee est prouvee meilleure que toutes"),
+        ("pepite", "l'alternative est prouvee meilleure que la plus jouee (une pepite"),
+    ],
+)
+def test_the_other_duel_verdicts(verdict, texte):
+    resume = resume_des_builds(
+        {**HYBRIDE, "duel_verdict": verdict}, {**COMBATTANT, "duel_verdict": verdict}
+    )
+
+    assert texte in resume
+
+
+def test_a_role_without_duel_says_so():
+    seule = {**COMBATTANT, "duel_verdict": None, "duel_populaire": None}
+    seule["duel_alternative"] = None
+
+    assert "BOTTOM : une seule famille jouee au moins 10 fois, pas de duel." in (
+        resume_des_builds(seule)
+    )
+
+
+def test_an_unknown_duel_verdict_is_refused():
+    with pytest.raises(ValueError, match="verdict de duel inconnu"):
+        resume_des_builds(
+            {**HYBRIDE, "duel_verdict": "presque"},
+            {**COMBATTANT, "duel_verdict": "presque"},
+        )
+
+
+def test_the_duel_columns_stay_out_of_the_family_rows():
+    client = FakeBigQuery(resultat_requete=[HYBRIDE, COMBATTANT])
+
+    familles = builds_du_champion("Ezreal", "16.23", client)["familles"]
+
+    for famille in familles:
+        assert not any(cle.startswith("duel_") for cle in famille)
+
+
+def test_one_game_is_written_in_the_singular_in_the_builds_summary():
+    resume = resume_des_builds({**HYBRIDE, "parties": 1}, {**COMBATTANT, "parties": 1})
+
+    assert "1 partie, " in resume
+    assert "1 parties" not in resume

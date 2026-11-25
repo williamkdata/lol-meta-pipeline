@@ -19,6 +19,7 @@ from outils import (
     bulletin_du_patch,
     changements_du_patch,
     dernier_patch,
+    nombre_de_parties,
     objets_du_champion,
 )
 
@@ -52,7 +53,12 @@ CONSIGNES = (
     # Essai du 25/11 : « la theorie a vu juste dans 8 cas sur 8 ... elle est
     # donc correcte », 4 seulement etant prouvees.
     "Ne conclus jamais que la theorie est correcte ou a vu juste : dis combien "
-    "de predictions sont prouvees, et combien vont seulement dans le bon sens."
+    "de predictions sont prouvees, et combien vont seulement dans le bon sens. "
+    # Essai du 25/11 : « la theorie predit que combattant est optimal »,
+    # « hybride plus populaire » (c'etait combattant, 80 %).
+    "Pour les builds, n'ajoute aucune conclusion : reprends la phrase de resume, "
+    "qui dit deja quelle famille est prouvee meilleure, ou qu'aucune ne l'est ; "
+    "l'outil des builds ne dit rien de la theorie."
 )
 
 # Ce que le modele voit de chaque outil : son nom, a quoi il sert, ses
@@ -259,13 +265,17 @@ def detail_verifie(journal: list) -> str:
             lignes.append(
                 f"Builds de {resultat['champion']} au patch {resultat['patch']} :"
             )
+            # La phrase du duel d'abord, recopiee telle quelle.
+            if "resume" in resultat:
+                lignes.append(f"- {resultat['resume']}")
             for f in resultat["familles"]:
                 if f["vrai_choix"]:
                     choix = f"rang {f['rang_parmi_les_choix']} parmi les choix"
                 else:
                     choix = "moins de 10 parties : pas un choix"
                 ligne = (
-                    f"- {f['poste']}, {f['famille']} : {f['parties']} parties "
+                    f"- {f['poste']}, {f['famille']} : "
+                    f"{nombre_de_parties(f['parties'])} "
                     f"({pct(f['part_des_parties_pct'])} des parties), victoires "
                     f"{pct(f['victoires_pct'])} [{pct(f['victoires_bas_pct'])} ; "
                     f"{pct(f['victoires_haut_pct'])}], {choix}"
