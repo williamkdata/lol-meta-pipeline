@@ -445,7 +445,79 @@ models:
           arguments:
             combination_of_columns: [patch_key, champion_id, value_kind, item_id]
 
+  - name: mart_ladder_build_family_items
+    description: >
+      Les objets de chaque famille de builds (25/11/2026) : pour un champion a
+      son poste et par patch, les objets presents dans les 3 premiers objets
+      termines des joueurs de la famille, dans combien de parties (joueurs
+      distincts) et quelle part des parties de la famille. Precalcule chaque
+      jour : l'assistant le lit en quelques Mo au lieu de refaire le calcul de
+      int_ladder__build_families (~450 Mo par question, mesure du 23/11).
+    columns:
+      - name: share_of_family_games
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+      - name: item_rank
+        data_tests: [not_null]
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [patch_key, team_position, champion_id, build_family, item_id]
+
 unit_tests:
+  # Trois joueurs d'Ezreal (BOTTOM, combattant, 16.23), 3 parties de la famille :
+  #   j1 : Trinity Force 3078, Manamune 3004, Endless Hunger 6610 ;
+  #   j2 : Trinity Force, Manamune, Black Cleaver 3071 ;
+  #   j3 : Trinity Force, Trinity Force (le piege : un objet compte une fois par
+  #        joueur), Manamune.
+  # Trinity et Manamune : 3 parties sur 3 (1,0) ; Endless Hunger et Black
+  # Cleaver : 1 sur 3 (0,3333). Egalite departagee par le numero d'objet :
+  # Manamune (3004) 1er, Trinity (3078) 2e, Black Cleaver (3071) 3e, Endless
+  # Hunger (6610) 4e. Un objet absent de la seed (9999) garde son numero.
+  - name: build_family_items_count_each_player_once
+    model: mart_ladder_build_family_items
+    given:
+      - input: ref('int_ladder__build_families')
+        format: sql
+        rows: |
+          SELECT 1623 AS patch_key, 'BOTTOM' AS team_position, 81 AS champion_id,
+            'm1' AS match_id, 1 AS participant_id, TRUE AS is_win,
+            [3078, 3004, 6610] AS item_ids, ['combattant'] AS families,
+            3 AS items_counted, 'combattant' AS build_family,
+            'majorite' AS classification_rule
+          UNION ALL SELECT 1623, 'BOTTOM', 81, 'm2', 1, FALSE, [3078, 3004, 3071],
+            ['combattant'], 3, 'combattant', 'majorite'
+          UNION ALL SELECT 1623, 'BOTTOM', 81, 'm3', 1, TRUE, [3078, 3078, 3004],
+            ['combattant'], 3, 'combattant', 'majorite'
+          UNION ALL SELECT 1623, 'MIDDLE', 81, 'm4', 1, TRUE, [9999],
+            ['ap'], 1, 'ap', 'premier_objet'
+      - input: ref('mart_ladder_build_families')
+        rows:
+          - {patch_key: 1623, team_position: BOTTOM, champion_id: 81, build_family: combattant, games: 3}
+          - {patch_key: 1623, team_position: MIDDLE, champion_id: 81, build_family: ap, games: 1}
+      - input: ref('item_families')
+        rows:
+          - {item_id: 3078, item_name: Trinity Force, family: combattant}
+          - {item_id: 3004, item_name: Manamune, family: ad_mana}
+          - {item_id: 6610, item_name: Endless Hunger, family: combattant}
+          - {item_id: 3071, item_name: Black Cleaver, family: combattant}
+    expect:
+      rows:
+        - {team_position: BOTTOM, build_family: combattant, item_id: 3004, item_name: Manamune,
+           games_with_item: 3, family_games: 3, share_of_family_games: 1.0, item_rank: 1}
+        - {team_position: BOTTOM, build_family: combattant, item_id: 3078, item_name: Trinity Force,
+           games_with_item: 3, family_games: 3, share_of_family_games: 1.0, item_rank: 2}
+        - {team_position: BOTTOM, build_family: combattant, item_id: 3071, item_name: Black Cleaver,
+           games_with_item: 1, family_games: 3, share_of_family_games: 0.3333, item_rank: 3}
+        - {team_position: BOTTOM, build_family: combattant, item_id: 6610, item_name: Endless Hunger,
+           games_with_item: 1, family_games: 3, share_of_family_games: 0.3333, item_rank: 4}
+        - {team_position: MIDDLE, build_family: ap, item_id: 9999, item_name: '9999',
+           games_with_item: 1, family_games: 1, share_of_family_games: 1.0, item_rank: 1}
+
   # Le calcul de la fourchette, fige sur un cas verifie a la main : Ahri mid,
   # 3 victoires sur 4 -> Wilson 95 % = [0,3006 ; 0,9544].
   - name: wilson_interval_on_three_wins_out_of_four

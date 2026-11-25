@@ -79,6 +79,7 @@ API Riot ─────────┘    brut gzip,        lol_raw (permanent)
 | `mart_champion_stat_profile` | Avec quelles stats chaque champion grandit-il, et dans quelle proportion ? Pour ses dégâts, et pour sa survie ? | patch × champion × valeur × stat |
 | `mart_item_theory_value` | Que vaut chaque objet pour chaque champion, d'après ses ratios, en dégâts et en survie ? Qu'est-ce que le patch a changé ? | patch × champion × valeur × objet |
 | `mart_ladder_build_families` | Quelles familles de builds (critique, létalité, AP, hybride…) pour ce champion, combien de parties, quel résultat ? Lesquelles sont de vrais choix ? | patch × poste × champion × famille |
+| `mart_ladder_build_family_items` | Que contient chaque famille ? Quels objets, dans quelle part de ses parties ? (Précalculé pour l'assistant : 1,1 Mo lus par question au lieu de ~480 Mo ; mêmes résultats, vérifiés sur Ezreal) | patch × poste × champion × famille × objet |
 | `mart_ladder_build_fidelity` | Lit-on bien les builds ? Les 3 premiers objets achetés sont-ils dans l'inventaire de fin de partie ? | patch |
 | `mart_ladder_build_duels` | Le build le plus joué gagne-t-il plus que sa meilleure alternative ? Confirmé, pépite ou non départagé | patch × poste × champion × niveau (famille ou chemin) |
 | `mart_patch_predictions` | Que prédit la théorie, le jour du patch et avant toute partie, pour chaque objet ou champion changé ? | patch × sujet |
