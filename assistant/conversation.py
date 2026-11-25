@@ -19,6 +19,7 @@ from outils import (
     bulletin_du_patch,
     changements_du_patch,
     dernier_patch,
+    objets_du_champion,
 )
 
 OLLAMA = "http://127.0.0.1:11434"
@@ -112,6 +113,25 @@ SCHEMAS_OUTILS = [
                     "patch": {"type": "string", "description": "ex. 16.23"},
                 },
                 "required": ["patch"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "objets_du_champion",
+            "description": (
+                "Les objets les plus rentables EN THEORIE pour un champion (les "
+                "ratios de ses sorts), pour ses degats et pour sa survie, et ce "
+                "que le patch a change. Pas ce que jouent les joueurs."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "champion": {"type": "string", "description": "ex. Annie"},
+                    "patch": {"type": "string", "description": "ex. 16.23"},
+                },
+                "required": ["champion", "patch"],
             },
         },
     },
@@ -220,6 +240,15 @@ def detail_verifie(journal: list) -> str:
         if nom == "changements_du_patch":
             lignes.append(f"Changements du patch {resultat['patch']} :")
             lignes.extend(f"- {p['verdict']}" for p in resultat["predictions"])
+        elif nom == "objets_du_champion":
+            lignes.append(
+                f"Objets de {resultat['champion']} en theorie, au patch "
+                f"{resultat['patch']} :"
+            )
+            # La phrase recopiee telle quelle (la remarque suit, plus bas,
+            # pour un champion inconnu).
+            if "resume" in resultat:
+                lignes.append(f"- {resultat['resume']}")
         elif nom == "bulletin_du_patch":
             lignes.append(f"Bulletin du patch {resultat['patch']} :")
             # La phrase de bilan, recopiee telle quelle (la remarque suit,
@@ -268,6 +297,7 @@ if __name__ == "__main__":
         "changements_du_patch": functools.partial(changements_du_patch, client=client),
         "builds_du_champion": functools.partial(builds_du_champion, client=client),
         "bulletin_du_patch": functools.partial(bulletin_du_patch, client=client),
+        "objets_du_champion": functools.partial(objets_du_champion, client=client),
     }
     question = " ".join(sys.argv[1:]) or "Qu'est-ce qui a change au dernier patch ?"
     journal = []

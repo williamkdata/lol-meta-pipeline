@@ -451,3 +451,44 @@ def test_the_instructions_forbid_concluding_that_the_theory_is_right():
 
     assert "Ne conclus jamais que la theorie est correcte" in consignes
     assert "combien de predictions sont prouvees" in consignes
+
+
+# --- les objets theoriques dans le detail verifie (25/11) -----------------------
+
+
+def test_the_verified_detail_copies_the_items_summary():
+    resultat = {
+        "champion": "Annie",
+        "patch": "16.23",
+        "degats": [{"objet": "Rabadon's Deathcap"}],
+        "resume": "En theorie (...), pour Annie au patch 16.23.",
+    }
+
+    detail = detail_verifie([("objets_du_champion", {"champion": "Annie"}, resultat)])
+
+    assert detail.splitlines() == [
+        "Objets de Annie en theorie, au patch 16.23 :",
+        "- En theorie (...), pour Annie au patch 16.23.",
+    ]
+
+
+def test_the_verified_detail_of_an_unknown_champion_shows_the_remark():
+    resultat = {
+        "champion": "Teemoo",
+        "patch": "16.23",
+        "degats": [],
+        "remarque": "aucune valeur theorique",
+    }
+
+    detail = detail_verifie([("objets_du_champion", {"champion": "Teemoo"}, resultat)])
+
+    assert detail.splitlines() == [
+        "Objets de Teemoo en theorie, au patch 16.23 :",
+        "- aucune valeur theorique",
+    ]
+
+
+def test_the_items_tool_is_offered_to_the_model():
+    noms = {schema["function"]["name"] for schema in SCHEMAS_OUTILS}
+
+    assert "objets_du_champion" in noms

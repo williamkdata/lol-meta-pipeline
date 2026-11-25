@@ -502,3 +502,151 @@ def bulletin_du_patch(patch: str, client) -> dict:
         )
     b["resume"] = " ".join(phrases)
     return {"patch": patch, "definitions": DEFINITIONS_BULLETIN, "bulletin": b}
+
+
+DEFINITIONS_OBJETS = {
+    "resume": "les objets les plus rentables en theorie pour ce champion, deja "
+    "mis en phrase : reprends-la telle quelle",
+    "degats": "les 5 objets les plus rentables pour les degats du champion, en "
+    "theorie (les ratios de ses sorts)",
+    "survie": "les 5 objets les plus rentables pour sa survie (ses boucliers, "
+    "soins et vitesses), en theorie ; vide s'il n'a aucun ratio de survie",
+    "changements": "les 3 plus gros changements de valeur depuis le patch "
+    "precedent (un ratio ou une stat d'objet a change)",
+    "objet": "le nom de l'objet",
+    "rang": "1 = l'objet le plus rentable pour ce champion, dans cette valeur",
+    "points_pour_1000_or": "points de ratio (stats de l'objet x ratios des "
+    "sorts du champion) pour 1 000 pieces d'or. Ce n'est PAS de l'or, ni un "
+    "taux de victoire. Les effets des objets ne comptent pas",
+    "valeur": "degats ou survie",
+    "ecart_avec_patch_precedent": "variation de la valeur de l'objet, en "
+    "points de ratio (pas pour 1 000 po), depuis le patch precedent ; positif = "
+    "l'objet est devenu meilleur pour ce champion",
+}
+
+
+def objets_du_champion(champion: str, patch: str, client) -> dict:
+    """Les objets les plus rentables EN THEORIE pour un champion (la valeur
+    theorique : les stats de l'objet x les ratios de ses sorts), pour ses degats
+    et pour sa survie, et les plus gros changements depuis le patch precedent.
+    Reprend l'outil du prototype du 05/11 (qui lisait la dev, et les degats
+    seuls). Leve ValueError si le patch est illisible."""
+    cle = _cle_du_patch(patch)
+    # Le champion est trouve par son code (Wukong = MonkeyKing dans les
+    # fichiers du jeu) ou par son nom affiche (Data Dragon).
+    sql = f"""
+        WITH valeurs AS (
+            SELECT
+                t.value_kind,
+                t.item_name,
+                t.rank_for_champion,
+                t.theory_value_per_1000_gold,
+                t.change_vs_previous_patch
+            FROM `{PROJET}.{DATASET}.mart_item_theory_value` AS t
+            INNER JOIN `{PROJET}.{DATASET}.stg_ddragon__champions` AS c
+                ON c.patch_key = t.patch_key AND c.champion_id = t.champion_id
+            WHERE t.patch_key = @patch
+                AND LOWER(@champion) IN (LOWER(t.champion_code), LOWER(c.champion_name))
+        )
+
+        SELECT
+            'meilleurs' AS liste,
+            value_kind AS valeur,
+            item_name AS objet,
+            rank_for_champion AS rang,
+            theory_value_per_1000_gold AS points_pour_1000_or,
+            change_vs_previous_patch AS ecart_avec_patch_precedent
+        FROM valeurs
+        WHERE rank_for_champion <= 5
+
+        UNION ALL
+
+        SELECT
+            'changements',
+            value_kind,
+            item_name,
+            rank_for_champion,
+            theory_value_per_1000_gold,
+            change_vs_previous_patch
+        FROM valeurs
+        WHERE change_vs_previous_patch != 0
+        QUALIFY ROW_NUMBER() OVER (
+            ORDER BY ABS(change_vs_previous_patch) DESC, item_name
+        ) <= 3
+
+        ORDER BY liste DESC, valeur, rang, objet
+    """
+    config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("patch", "INT64", cle),
+            bigquery.ScalarQueryParameter("champion", "STRING", champion),
+        ]
+    )
+    lignes = [dict(ligne) for ligne in client.query(sql, job_config=config).result()]
+
+    def meilleurs(valeur):
+        return [
+            {
+                "objet": ligne["objet"],
+                "rang": ligne["rang"],
+                "points_pour_1000_or": ligne["points_pour_1000_or"],
+            }
+            for ligne in lignes
+            if ligne["liste"] == "meilleurs" and ligne["valeur"] == valeur
+        ]
+
+    resultat = {
+        "champion": champion,
+        "patch": patch,
+        "definitions": DEFINITIONS_OBJETS,
+        "degats": meilleurs("degats"),
+        "survie": meilleurs("survie"),
+        "changements": [
+            {
+                "valeur": ligne["valeur"],
+                "objet": ligne["objet"],
+                "ecart_avec_patch_precedent": ligne["ecart_avec_patch_precedent"],
+            }
+            for ligne in lignes
+            if ligne["liste"] == "changements"
+        ],
+    }
+    if not lignes:
+        resultat["remarque"] = (
+            "aucune valeur theorique : le nom du champion est peut-etre mal ecrit, "
+            "ou ce patch n'est pas charge"
+        )
+        return resultat
+
+    def points(valeur):
+        # 107.34 -> "107,34" : la virgule sur le NOMBRE seul (un point dans un
+        # nom d'objet doit rester un point).
+        return f"{valeur:.2f}".replace(".", ",")
+
+    def liste_txt(objets):
+        # "Rabadon's Deathcap (107,34 points pour 1 000 po), ..."
+        return ", ".join(
+            f"{o['objet']} ({points(o['points_pour_1000_or'])} points pour 1 000 po)"
+            for o in objets
+        )
+
+    degats = liste_txt(resultat["degats"]) or "aucun ratio de degats"
+    survie = liste_txt(resultat["survie"]) or "aucun ratio de survie"
+    changements = (
+        ", ".join(
+            f"{c['objet']} ({c['valeur']}, "
+            + f"{c['ecart_avec_patch_precedent']:+.1f}".replace(".", ",")
+            + " points)"
+            for c in resultat["changements"]
+        )
+        or "aucun"
+    )
+    resultat["resume"] = (
+        "En theorie (les ratios des sorts seulement : ni les effets des objets, "
+        f"ni les parties du ladder), pour {champion} au patch {patch}. Pour ses "
+        f"degats : {degats}. Pour sa survie : {survie}. "
+        "Plus gros changements depuis le patch precedent : "
+        f"{changements}. Ce ne sont pas des taux de victoire : ce que jouent "
+        "vraiment les joueurs est dans leurs builds."
+    )
+    return resultat

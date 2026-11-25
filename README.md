@@ -164,6 +164,7 @@ Le bulletin juge le moteur théorique **après** un patch. Le PBE, le serveur de
 - **Des prédictions datées, jugées d'après une règle fixée d'avance.** Chaque aperçu ajoute une section à `predictions/<patch>.md` : date, version exacte du PBE, ce qui change, la prédiction, et ce qu'on peut espérer trancher. Le juge est `mart_patch_experiments` (part de jeu et victoires, fourchettes de Wilson séparées, référence « rien ne change »). On ne réécrit jamais une prédiction passée.
 - **Premier aperçu (18/11, 16.24)** : le cycle de test commence, **un seul champion change** (Akshan : ratio d'AD du Q 0,70 → 0,80), aucun objet. Contrôle dans BigQuery : formules et objets identiques au 16.23, 6 valeurs de plus (Akshan). **Prédiction : Akshan en hausse (+3,7 % de valeur pour ses objets).** Akshan est rare (0,35 % des joueurs au 16.22) : sa part de jeu pourra se juger (fourchette ~±0,03 point sur un patch complet), son taux de victoire probablement pas (~±5 points).
 - **Deuxième aperçu (20/11, nouvelle version du PBE)** : toujours le seul Q d'Akshan. **Prédiction : hausse, +4,3 %** : même changement, mais le moteur a changé entre-temps (nouveaux codes de stats, survie à part), la base de sa valeur dégâts est plus petite. **Un défaut trouvé avant d'écrire la prédiction** : le premier calcul donnait 77 prédictions, presque toutes en hausse (Shen +1 402 %), sur les champions à boucliers et soins. L'aperçu ne chargeait pas les infobulles du PBE (inutiles avant la valeur survie) : aucune formule n'était reconnue comme de la survie, toute la survie passait dans les dégâts, et le build restait vert. Corrigé : l'aperçu charge les infobulles du PBE (34 659 lignes), tests d'abord, 4 sabotages attrapés. Et un **garde-fou** fait maintenant échouer le build si un patch a des formules sans infobulles (vérifié : il attrape l'aperçu fautif ; en prod, 23 patches sur 23 ont leurs infobulles). **En prod depuis le 23/11 (image `5`)**, avant la sortie du 16.24 : si les infobulles d'un nouveau patch manquaient, le run échouerait et l'alerte partirait, au lieu de publier des prédictions fausses.
+- **Aperçus des 23 et 25/11** (deux nouvelles versions du PBE) : contrôle complet, ligne par ligne contre le 16.23 (valeurs, morceaux de formules, infobulles, stats des objets) : **toujours le seul Akshan**, prédiction inchangée. À une semaine environ de la sortie, le 16.24 semble un patch calme : une seule prédiction sera jugée.
 
 ## Un assistant local qui lit les marts
 
@@ -171,7 +172,10 @@ Un modèle de langage tourne **sur le PC** (Qwen3 4B, via Ollama, 3,9 Go, entiè
 
 - `changements_du_patch(patch)` : ce que le moteur théorique a prédit pour un patch, et ce que le ladder en a dit ;
 - `builds_du_champion(champion, patch, poste)` : les familles de builds (parties, popularité, victoires avec leur fourchette, objets les plus fréquents) ;
-- `bulletin_du_patch(patch)` : le bulletin du patch, en une phrase de bilan calculée qui dit **ce que juge chaque mesure** (la fidélité dit si nous lisons bien les builds, les duels comparent les builds entre eux, **seules les expériences jugent la théorie**) et **compte chaque groupe à part** (prouvées dans le sens prédit, dans le sens prédit sans preuve, contredites, autres).
+- `bulletin_du_patch(patch)` : le bulletin du patch, en une phrase de bilan calculée qui dit **ce que juge chaque mesure** (la fidélité dit si nous lisons bien les builds, les duels comparent les builds entre eux, **seules les expériences jugent la théorie**) et **compte chaque groupe à part** (prouvées dans le sens prédit, dans le sens prédit sans preuve, contredites, autres) ;
+- `objets_du_champion(champion, patch)` : les objets les plus rentables **en théorie** (les ratios des sorts), pour les dégâts et pour la survie, et ce que le patch a changé ; le champion est trouvé par son nom ou par son code du jeu (Wukong = `MonkeyKing`).
+
+**La version d'Ollama est fixée (0.40.16, mise à jour automatique coupée)** : le 25/11, Ollama s'est mis à jour seul en 0.40.18, et le modèle n'appelait plus ses outils (il « réfléchissait à voix haute » en anglais, inventait des noms d'outils et un patch « 11.23 »). Les notes de version officielles expliquent pourquoi : la consigne de ne pas réfléchir et la description des outils ne lui parviennent plus de la même façon. Retour à la 0.40.16 (installateur officiel, empreinte et signature vérifiées) : les outils sont de nouveau appelés. Comme uv et dbt, un outil dont dépend le projet a sa version fixée ; « même question, même réponse » (température 0) n'est vrai qu'à version égale.
 
 Les règles, chacune née d'un essai mesuré (23-25/11) :
 - **le texte du modèle n'entre jamais dans le SQL** : le patch, le champion, le poste passent par des paramètres de requête (un nom piégé reste une valeur) ;
@@ -343,7 +347,7 @@ uv run python ingestion/pbe.py
 cd dbt && uv run dbt build --target pbe --select +mart_patch_predictions --exclude "test_type:unit" --indirect-selection cautious --profiles-dir profiles
 ```
 
-Poser une question à l'assistant (Ollama lancé sur le PC, avec le modèle `hf.co/Qwen/Qwen3-4B-GGUF:Q4_K_M`) :
+Poser une question à l'assistant (Ollama **0.40.16** lancé sur le PC, mise à jour automatique coupée, avec le modèle `hf.co/Qwen/Qwen3-4B-GGUF:Q4_K_M`) :
 
 ```bash
 uv run python assistant/conversation.py "Quels builds pour Ezreal en adc ?"

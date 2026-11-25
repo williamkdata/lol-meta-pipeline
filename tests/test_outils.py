@@ -15,6 +15,7 @@ from outils import (
     bulletin_du_patch,
     changements_du_patch,
     dernier_patch,
+    objets_du_champion,
     phrase_du_verdict,
 )
 
@@ -616,3 +617,156 @@ def test_a_patch_without_bulletin_says_so():
 
     assert resultat["bulletin"] is None
     assert "aucun bulletin" in resultat["remarque"]
+
+
+# --- objets_du_champion ----------------------------------------------------------
+
+# Annie au 16.23 : les lignes de la requete (colonne liste : les meilleurs
+# objets de chaque valeur, puis les plus gros changements).
+OBJETS_ANNIE = [
+    {
+        "liste": "meilleurs",
+        "valeur": "degats",
+        "objet": "Rabadon's Deathcap",
+        "rang": 1,
+        "points_pour_1000_or": 107.34,
+        "ecart_avec_patch_precedent": 0.0,
+    },
+    {
+        "liste": "meilleurs",
+        "valeur": "degats",
+        "objet": "Luden's Echo",
+        "rang": 2,
+        "points_pour_1000_or": 105.09,
+        "ecart_avec_patch_precedent": 0.0,
+    },
+    {
+        "liste": "meilleurs",
+        "valeur": "survie",
+        "objet": "Warmog's Armor",
+        "rang": 1,
+        "points_pour_1000_or": 483.87,
+        "ecart_avec_patch_precedent": 12.5,
+    },
+    {
+        "liste": "changements",
+        "valeur": "survie",
+        "objet": "Warmog's Armor",
+        "rang": 1,
+        "points_pour_1000_or": 483.87,
+        "ecart_avec_patch_precedent": 12.5,
+    },
+]
+
+
+def test_the_items_tool_reads_its_champion_and_patch_through_parameters():
+    client = FakeBigQuery()
+
+    objets_du_champion("Annie", "16.4", client)
+
+    assert parametres(client) == {"patch": 1604, "champion": "Annie"}
+    (sql,) = client.requetes
+    assert "lol-meta-pipeline.lol_analytics.mart_item_theory_value" in sql
+
+
+def test_the_champion_is_found_by_its_code_or_its_name():
+    # Wukong s'appelle MonkeyKing dans les fichiers du jeu (champion_code) :
+    # le nom affiche vient de Data Dragon.
+    client = FakeBigQuery()
+
+    objets_du_champion("Wukong", "16.23", client)
+
+    (sql,) = client.requetes
+    assert "lol-meta-pipeline.lol_analytics.stg_ddragon__champions" in sql
+    assert "LOWER(@champion) IN (LOWER(t.champion_code), LOWER(c.champion_name))" in sql
+
+
+def test_the_items_tool_refuses_an_unreadable_patch_before_any_query():
+    client = FakeBigQuery()
+
+    with pytest.raises(ValueError, match="patch"):
+        objets_du_champion("Annie", "16", client)
+    assert client.requetes == []
+
+
+def test_the_rows_are_split_by_value_and_list():
+    resultat = objets_du_champion(
+        "Annie", "16.23", FakeBigQuery(resultat_requete=OBJETS_ANNIE)
+    )
+
+    assert [o["objet"] for o in resultat["degats"]] == [
+        "Rabadon's Deathcap",
+        "Luden's Echo",
+    ]
+    assert [o["objet"] for o in resultat["survie"]] == ["Warmog's Armor"]
+    assert resultat["changements"] == [
+        {
+            "valeur": "survie",
+            "objet": "Warmog's Armor",
+            "ecart_avec_patch_precedent": 12.5,
+        }
+    ]
+    colonnes = {
+        c
+        for liste in ("degats", "survie", "changements")
+        for o in resultat[liste]
+        for c in o
+    }
+    assert colonnes <= set(resultat["definitions"])
+
+
+def test_the_items_summary_says_it_is_theory():
+    resume = objets_du_champion(
+        "Annie", "16.23", FakeBigQuery(resultat_requete=OBJETS_ANNIE)
+    )["resume"]
+
+    assert resume == (
+        "En theorie (les ratios des sorts seulement : ni les effets des objets, "
+        "ni les parties du ladder), pour Annie au patch 16.23. Pour ses degats : "
+        "Rabadon's Deathcap (107,34 points pour 1 000 po), Luden's Echo (105,09 "
+        "points pour 1 000 po). Pour sa survie : Warmog's Armor (483,87 points "
+        "pour 1 000 po). Plus gros changements depuis le patch precedent : "
+        "Warmog's Armor (survie, +12,5 points). Ce ne sont pas des taux de "
+        "victoire : ce que jouent vraiment les joueurs est dans leurs builds."
+    )
+
+
+def test_a_champion_without_survival_ratio_says_so():
+    lignes = [o for o in OBJETS_ANNIE if o["valeur"] == "degats"]
+
+    resume = objets_du_champion(
+        "Annie", "16.23", FakeBigQuery(resultat_requete=lignes)
+    )["resume"]
+
+    assert "Pour sa survie : aucun ratio de survie." in resume
+    assert "Plus gros changements depuis le patch precedent : aucun." in resume
+
+
+def test_an_unknown_champion_says_so():
+    resultat = objets_du_champion("Teemoo", "16.23", FakeBigQuery())
+
+    assert resultat["degats"] == []
+    assert "aucune valeur theorique" in resultat["remarque"]
+    assert "resume" not in resultat
+
+
+def test_a_dot_in_an_item_name_is_kept():
+    # La virgule francaise ne touche que le nombre : un nom d'objet avec un
+    # point (cas fictif) reste intact.
+    ligne = {**OBJETS_ANNIE[0], "objet": "Lame v2.0", "points_pour_1000_or": 10.0}
+
+    resume = objets_du_champion(
+        "Annie", "16.23", FakeBigQuery(resultat_requete=[ligne])
+    )["resume"]
+
+    assert "Lame v2.0 (10,00 points pour 1 000 po)" in resume
+
+
+def test_a_champion_without_damage_ratio_says_so():
+    lignes = [o for o in OBJETS_ANNIE if o["valeur"] == "survie"]
+
+    resume = objets_du_champion(
+        "Annie", "16.23", FakeBigQuery(resultat_requete=lignes)
+    )["resume"]
+
+    assert "Pour ses degats : aucun ratio de degats." in resume
