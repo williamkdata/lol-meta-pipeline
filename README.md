@@ -170,16 +170,17 @@ Le bulletin juge le moteur théorique **après** un patch. Le PBE, le serveur de
 Un modèle de langage tourne **sur le PC** (Qwen3 4B, via Ollama, 3,9 Go, entièrement sur la carte graphique) : aucun appel payant, aucune donnée ne sort. Il répond aux questions d'un joueur en appelant des **outils** (`assistant/outils.py`), des fonctions Python testées qui lisent les marts de prod :
 
 - `changements_du_patch(patch)` : ce que le moteur théorique a prédit pour un patch, et ce que le ladder en a dit ;
-- `builds_du_champion(champion, patch, poste)` : les familles de builds (parties, popularité, victoires avec leur fourchette, objets les plus fréquents).
+- `builds_du_champion(champion, patch, poste)` : les familles de builds (parties, popularité, victoires avec leur fourchette, objets les plus fréquents) ;
+- `bulletin_du_patch(patch)` : le bulletin du patch, en une phrase de bilan calculée qui dit **ce que juge chaque mesure** (la fidélité dit si nous lisons bien les builds, les duels comparent les builds entre eux, **seules les expériences jugent la théorie**) et **compte chaque groupe à part** (prouvées dans le sens prédit, dans le sens prédit sans preuve, contredites, autres).
 
-Les règles, chacune née d'un essai mesuré (23/11) :
+Les règles, chacune née d'un essai mesuré (23-25/11) :
 - **le texte du modèle n'entre jamais dans le SQL** : le patch, le champion, le poste passent par des paramètres de requête (un nom piégé reste une valeur) ;
 - **chaque chiffre arrive avec sa définition** ; une liste vide arrive avec une remarque (sinon le modèle comble le vide) ;
 - **ce qui doit être juste se calcule, le modèle ne fait que rédiger** : il confondait les codes de verdict (la part de jeu et les victoires, « confirmé » et « même sens ») ; il reçoit maintenant une phrase déjà interprétée et testée (« Part de jeu : 1,57 % -> 2,47 %, en hausse comme prédit, et c'est prouvé ») ; les familles arrivent avec leur nom en clair et leurs objets (il décrivait « hybride » comme « dégâts et survie » ; c'est Manamune + Horizon Focus pour Ezreal) ;
 - **deux blocs** : le résumé du modèle, puis le **détail vérifié**, mis en forme et recopié par le programme ; **température 0** : la même question donne la même réponse, deux essais se comparent ;
 - une erreur d'outil (patch illisible, poste inconnu) revient au modèle, qui peut corriger sa demande ; au plus 4 tours d'outils.
 
-Mesuré sur la même question (« qu'est-ce qui a changé au 16.23 ? »), chaque résumé relu phrase par phrase contre les chiffres : **4 erreurs** avec les codes bruts, **1** avec les phrases de verdict, puis **1, et une réponse identique d'un essai à l'autre** avec la température à 0. Sur les builds d'Ezreal : objets et taux justes, plus aucune description inventée après le nom des familles en clair. 15 à 47 s par question.
+Mesuré sur la même question (« qu'est-ce qui a changé au 16.23 ? »), chaque résumé relu phrase par phrase contre les chiffres : **4 erreurs** avec les codes bruts, **1** avec les phrases de verdict, puis **1, et une réponse identique d'un essai à l'autre** avec la température à 0. Sur les builds d'Ezreal : objets et taux justes, plus aucune description inventée après le nom des familles en clair. Sur le bulletin (« la théorie a-t-elle vu juste ? ») : d'abord « oui, 99,83 % de fidélité » (la fidélité ne juge pas la théorie), puis « 8 sur 8, elle est correcte » (4 seulement prouvées), enfin, avec la phrase qui compte chaque groupe et une consigne (« ne conclus jamais que la théorie est correcte »), **un résumé juste de bout en bout** : « 4 sur 8 prouvées, 4 autres dans le bon sens sans preuve ». 15 à 47 s par question.
 
 ## Choix notables
 

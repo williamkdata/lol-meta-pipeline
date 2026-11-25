@@ -13,7 +13,13 @@ import sys
 import requests
 from google.cloud import bigquery
 
-from outils import PROJET, builds_du_champion, changements_du_patch, dernier_patch
+from outils import (
+    PROJET,
+    builds_du_champion,
+    bulletin_du_patch,
+    changements_du_patch,
+    dernier_patch,
+)
 
 OLLAMA = "http://127.0.0.1:11434"
 # Version officielle de Qwen, depuis Hugging Face : le stockage du registre
@@ -41,7 +47,11 @@ CONSIGNES = (
     "N'ecris « prouve » ou « confirme » que si la phrase dit « et c'est "
     "prouve » ; sinon ecris « pas encore prouve ». Les mots degats et survie "
     "sont des valeurs theoriques (calculees sur les sorts), jamais des mesures "
-    "du ladder : le ladder mesure la part de jeu, la part d'achat et les victoires."
+    "du ladder : le ladder mesure la part de jeu, la part d'achat et les victoires. "
+    # Essai du 25/11 : « la theorie a vu juste dans 8 cas sur 8 ... elle est
+    # donc correcte », 4 seulement etant prouvees.
+    "Ne conclus jamais que la theorie est correcte ou a vu juste : dis combien "
+    "de predictions sont prouvees, et combien vont seulement dans le bon sens."
 )
 
 # Ce que le modele voit de chaque outil : son nom, a quoi il sert, ses
@@ -84,6 +94,24 @@ SCHEMAS_OUTILS = [
                     },
                 },
                 "required": ["champion", "patch"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "bulletin_du_patch",
+            "description": (
+                "Le bulletin d'un patch : la fidelite des builds, les duels du "
+                "build populaire contre ses alternatives, et combien de "
+                "predictions de la theorie le ladder a suivies."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "patch": {"type": "string", "description": "ex. 16.23"},
+                },
+                "required": ["patch"],
             },
         },
     },
@@ -192,6 +220,12 @@ def detail_verifie(journal: list) -> str:
         if nom == "changements_du_patch":
             lignes.append(f"Changements du patch {resultat['patch']} :")
             lignes.extend(f"- {p['verdict']}" for p in resultat["predictions"])
+        elif nom == "bulletin_du_patch":
+            lignes.append(f"Bulletin du patch {resultat['patch']} :")
+            # La phrase de bilan, recopiee telle quelle (la remarque suit,
+            # plus bas, quand il n'y a pas de bulletin).
+            if resultat["bulletin"] is not None:
+                lignes.append(f"- {resultat['bulletin']['resume']}")
         elif nom == "builds_du_champion":
             lignes.append(
                 f"Builds de {resultat['champion']} au patch {resultat['patch']} :"
@@ -233,6 +267,7 @@ if __name__ == "__main__":
     outils_prets = {
         "changements_du_patch": functools.partial(changements_du_patch, client=client),
         "builds_du_champion": functools.partial(builds_du_champion, client=client),
+        "bulletin_du_patch": functools.partial(bulletin_du_patch, client=client),
     }
     question = " ".join(sys.argv[1:]) or "Qu'est-ce qui a change au dernier patch ?"
     journal = []

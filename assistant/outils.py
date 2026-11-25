@@ -381,3 +381,124 @@ def dernier_patch(client) -> str:
     # 1623 -> 1623 // 100 = 16 (division entiere) et 1623 % 100 = 23 (le
     # reste) : "16.23". Et 1604 -> "16.4", comme Riot l'ecrit.
     return f"{cle // 100}.{cle % 100}"
+
+
+DEFINITIONS_BULLETIN = {
+    "resume": "le bulletin du patch en une phrase, deja calculee et verifiee : "
+    "reprends-la telle quelle",
+    "objets_controles": "le nombre de premiers objets achetes controles (les 3 "
+    "premiers objets termines de chaque joueur du ladder)",
+    "fidelite_pct": "en % : la part de ces objets retrouves dans l'inventaire "
+    "de fin de partie. Pres de 100 % = nos builds decrivent bien ce que les "
+    "joueurs possedent. Ne dit rien de la theorie",
+    "duels_familles": "le nombre de duels de familles : pour un champion a son "
+    "poste, le build le plus joue contre sa meilleure alternative (10 parties "
+    "ou plus)",
+    "familles_populaire_prouve": "les duels ou le build populaire est prouve "
+    "meilleur (fourchettes de Wilson separees)",
+    "familles_pepites": "les duels ou une alternative est prouvee meilleure que "
+    "le build populaire (une pepite) ; a confirmer au patch suivant",
+    "duels_chemins": "la meme chose au niveau du chemin (les 2 premiers objets)",
+    "chemins_populaire_prouve": "les duels de chemins ou le populaire est prouve",
+    "chemins_pepites": "les pepites au niveau du chemin",
+    "experiences": "le nombre de changements de Riot (objets ou champions) juges "
+    "sur le ladder a ce patch",
+    "experiences_sens_predit": "les experiences dont la part de jeu ou d'achat "
+    "a bouge dans le sens predit par la theorie (prouve ou non)",
+    "experiences_prouvees": "les experiences prouvees dans le sens predit",
+    "experiences_contredites": "les experiences prouvees dans l'autre sens",
+}
+
+
+def bulletin_du_patch(patch: str, client) -> dict:
+    """Le bulletin d'un patch (mart_patch_bulletin) : la fidelite des builds,
+    les duels du build populaire contre ses alternatives, les experiences
+    naturelles. Les chiffres, et une phrase de bilan calculee ici : ce qui doit
+    etre juste ne passe pas par le modele (essais du 23/11). Leve ValueError si
+    le patch est illisible."""
+    cle = _cle_du_patch(patch)
+    sql = f"""
+        SELECT
+            items_checked AS objets_controles,
+            ROUND(fidelity_rate * 100, 2) AS fidelite_pct,
+            family_duels AS duels_familles,
+            family_confirmed AS familles_populaire_prouve,
+            family_gems AS familles_pepites,
+            path_duels AS duels_chemins,
+            path_confirmed AS chemins_populaire_prouve,
+            path_gems AS chemins_pepites,
+            experiments AS experiences,
+            experiments_predicted_direction AS experiences_sens_predit,
+            experiments_confirmed AS experiences_prouvees,
+            experiments_contradicted AS experiences_contredites
+        FROM `{PROJET}.{DATASET}.mart_patch_bulletin`
+        WHERE patch_key = @patch
+    """
+    config = bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ScalarQueryParameter("patch", "INT64", cle)]
+    )
+    lignes = list(client.query(sql, job_config=config).result())
+    if not lignes:
+        return {
+            "patch": patch,
+            "definitions": DEFINITIONS_BULLETIN,
+            "bulletin": None,
+            "remarque": "aucun bulletin pour ce patch : pas encore de parties "
+            "de ladder (ou patch inconnu)",
+        }
+
+    # Une copie : la ligne lue reste intacte.
+    b = dict(lignes[0])
+    # 94103 -> "94 103" (separateur de milliers a la francaise) ; 99.83 ->
+    # "99,83 %".
+    objets = f"{b['objets_controles']:,}".replace(",", " ")
+    fidelite = f"{b['fidelite_pct']:.2f}".replace(".", ",")
+    # Les duels ni prouves pour le populaire ni pepites : non departages.
+    familles_non_departagees = (
+        b["duels_familles"] - b["familles_populaire_prouve"] - b["familles_pepites"]
+    )
+    chemins_non_departages = (
+        b["duels_chemins"] - b["chemins_populaire_prouve"] - b["chemins_pepites"]
+    )
+    # Chaque mesure dit ce qu'elle juge (essai du 23/11 : le modele prenait la
+    # fidelite pour une preuve de la theorie). Seules les experiences jugent la
+    # theorie.
+    phrases = [
+        f"Bulletin du patch {patch}.",
+        "Fidelite des builds (dit si nous lisons bien les builds, rien sur la "
+        f"theorie) : {fidelite} % des {objets} premiers objets achetes sont dans "
+        "l'inventaire de fin de partie.",
+        "Duels (le build le plus joue contre sa meilleure alternative : ils "
+        "comparent les builds entre eux, rien sur la theorie) : de familles, "
+        f"{b['duels_familles']}, dont populaire prouve meilleur : "
+        f"{b['familles_populaire_prouve']}, pepites (alternative prouvee "
+        f"meilleure) : {b['familles_pepites']}, non departages : "
+        f"{familles_non_departagees} ; de chemins, {b['duels_chemins']}, dont "
+        f"populaire prouve meilleur : {b['chemins_populaire_prouve']}, pepites : "
+        f"{b['chemins_pepites']}, non departages : {chemins_non_departages}.",
+        "Une pepite de debut de patch reste a confirmer au patch suivant.",
+    ]
+    if b["experiences"] == 0:
+        phrases.append(
+            "Experiences (seules a juger la theorie) : aucun changement de Riot "
+            "jugeable a ce patch."
+        )
+    else:
+        # Chaque groupe compte a part (essai du 25/11 : « la theorie a vu juste
+        # 8 fois sur 8 », 4 seulement prouvees). Les « sans preuve » et les
+        # « autres » se calculent ici, pas dans la tete du modele.
+        n = b["experiences"]
+        prouvees = b["experiences_prouvees"]
+        sans_preuve = b["experiences_sens_predit"] - prouvees
+        contredites = b["experiences_contredites"]
+        autres = n - b["experiences_sens_predit"] - contredites
+        phrases.append(
+            "Experiences (seules a juger la theorie : un changement de Riot, une "
+            f"prediction, ce que le ladder a fait) : {n} changements de Riot "
+            f"juges. Prouves dans le sens predit : {prouvees} sur {n}. Dans le "
+            f"sens predit, mais sans preuve : {sans_preuve}. Contredits (prouves "
+            f"dans l'autre sens) : {contredites}. Autres (sens contraire non "
+            f"prouve, stables ou sans donnees) : {autres}."
+        )
+    b["resume"] = " ".join(phrases)
+    return {"patch": patch, "definitions": DEFINITIONS_BULLETIN, "bulletin": b}

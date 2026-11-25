@@ -12,6 +12,7 @@ from fakes import FakeBigQuery
 from outils import (
     FAMILLES_EN_CLAIR,
     builds_du_champion,
+    bulletin_du_patch,
     changements_du_patch,
     dernier_patch,
     phrase_du_verdict,
@@ -491,3 +492,127 @@ def test_an_unknown_verdict_code_is_refused():
     # que donner au modele une phrase fausse.
     with pytest.raises(ValueError, match="verdict inconnu"):
         phrase_du_verdict(ligne(verdict_part="presque"))
+
+
+# --- bulletin_du_patch -----------------------------------------------------------
+
+# La ligne du 16.23 en prod (23/11), colonnes renommees en francais par le SQL.
+BULLETIN_16_23 = {
+    "objets_controles": 94103,
+    "fidelite_pct": 99.83,
+    "duels_familles": 82,
+    "familles_populaire_prouve": 1,
+    "familles_pepites": 2,
+    "duels_chemins": 164,
+    "chemins_populaire_prouve": 0,
+    "chemins_pepites": 5,
+    "experiences": 8,
+    "experiences_sens_predit": 8,
+    "experiences_prouvees": 3,
+    "experiences_contredites": 0,
+}
+
+
+def test_the_bulletin_reads_its_patch_through_a_parameter_in_prod():
+    client = FakeBigQuery()
+
+    bulletin_du_patch("16.4", client)
+
+    assert parametres(client)["patch"] == 1604
+    (sql,) = client.requetes
+    assert "lol-meta-pipeline.lol_analytics.mart_patch_bulletin" in sql
+    assert "WHERE patch_key = @patch" in sql
+
+
+def test_the_bulletin_refuses_an_unreadable_patch_before_any_query():
+    client = FakeBigQuery()
+
+    with pytest.raises(ValueError, match="patch"):
+        bulletin_du_patch("16", client)
+    assert client.requetes == []
+
+
+def test_the_bulletin_summary_of_16_23():
+    resultat = bulletin_du_patch(
+        "16.23", FakeBigQuery(resultat_requete=[BULLETIN_16_23])
+    )
+
+    assert resultat["bulletin"]["resume"] == (
+        "Bulletin du patch 16.23. Fidelite des builds (dit si nous lisons bien "
+        "les builds, rien sur la theorie) : 99,83 % des 94 103 premiers objets "
+        "achetes sont dans l'inventaire de fin de partie. Duels (le build le plus "
+        "joue contre sa meilleure alternative : ils comparent les builds entre "
+        "eux, rien sur la theorie) : de familles, 82, dont populaire prouve "
+        "meilleur : 1, pepites (alternative prouvee meilleure) : 2, non "
+        "departages : 79 ; de chemins, 164, dont populaire prouve meilleur : 0, "
+        "pepites : 5, non departages : 159. Une pepite de debut de patch reste a "
+        "confirmer au patch suivant. Experiences (seules a juger la theorie : un "
+        "changement de Riot, une prediction, ce que le ladder a fait) : 8 "
+        "changements de Riot juges. Prouves dans le sens predit : 3 sur 8. Dans "
+        "le sens predit, mais sans preuve : 5. Contredits (prouves dans l'autre "
+        "sens) : 0. Autres (sens contraire non prouve, stables ou sans donnees) : "
+        "0."
+    )
+
+
+def test_the_experiments_are_split_so_that_nothing_adds_up_by_itself():
+    # Essai du 25/11 : « la theorie a vu juste 8 fois sur 8 », alors que 4
+    # seulement etaient prouvees. Chaque groupe est compte ici. Le 16.22 : 9
+    # experiences, 5 dans le sens predit dont 2 prouvees, 2 contredites.
+    ligne = {**BULLETIN_16_23, "experiences": 9, "experiences_sens_predit": 5}
+    ligne.update(experiences_prouvees=2, experiences_contredites=2)
+
+    resume = bulletin_du_patch("16.22", FakeBigQuery(resultat_requete=[ligne]))[
+        "bulletin"
+    ]["resume"]
+
+    assert resume.endswith(
+        "9 changements de Riot juges. Prouves dans le sens predit : 2 sur 9. "
+        "Dans le sens predit, mais sans preuve : 3. Contredits (prouves dans "
+        "l'autre sens) : 2. Autres (sens contraire non prouve, stables ou sans "
+        "donnees) : 2."
+    )
+
+
+def test_the_summary_says_which_measure_judges_the_theory():
+    # Essai du 23/11 : « la theorie a vu juste : les builds suivent les ratios
+    # des sorts (99,83 % de fidelite) ». La fidelite et les duels ne disent rien
+    # de la theorie ; seules les experiences la jugent. La phrase le dit.
+    resume = bulletin_du_patch(
+        "16.23", FakeBigQuery(resultat_requete=[BULLETIN_16_23])
+    )["bulletin"]["resume"]
+
+    assert resume.count("rien sur la theorie") == 2
+    assert "Experiences (seules a juger la theorie" in resume
+
+
+def test_a_patch_without_experiment_says_so_plainly():
+    ligne = {**BULLETIN_16_23, "experiences": 0, "experiences_sens_predit": 0}
+    ligne.update(experiences_prouvees=0, experiences_contredites=0)
+
+    resume = bulletin_du_patch("16.21", FakeBigQuery(resultat_requete=[ligne]))[
+        "bulletin"
+    ]["resume"]
+
+    assert resume.endswith(
+        "Experiences (seules a juger la theorie) : aucun changement de Riot "
+        "jugeable a ce patch."
+    )
+
+
+def test_the_bulletin_keeps_its_numbers_with_a_definition_each():
+    resultat = bulletin_du_patch(
+        "16.23", FakeBigQuery(resultat_requete=[BULLETIN_16_23])
+    )
+
+    assert {k: v for k, v in resultat["bulletin"].items() if k != "resume"} == (
+        BULLETIN_16_23
+    )
+    assert set(resultat["bulletin"]) <= set(resultat["definitions"])
+
+
+def test_a_patch_without_bulletin_says_so():
+    resultat = bulletin_du_patch("16.99", FakeBigQuery())
+
+    assert resultat["bulletin"] is None
+    assert "aucun bulletin" in resultat["remarque"]

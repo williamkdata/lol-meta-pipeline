@@ -414,3 +414,40 @@ def test_the_instructions_say_damage_and_survival_are_theoretical_values():
 
     assert "degats et survie sont des valeurs theoriques" in consignes
     assert "jamais des mesures du ladder" in consignes
+
+
+# --- le bulletin dans le detail verifie (23/11) ---------------------------------
+
+
+def test_the_verified_detail_copies_the_bulletin_summary():
+    resultat = {"patch": "16.23", "bulletin": {"resume": "Bulletin du patch 16.23."}}
+
+    detail = detail_verifie([("bulletin_du_patch", {"patch": "16.23"}, resultat)])
+
+    assert detail.splitlines() == [
+        "Bulletin du patch 16.23 :",
+        "- Bulletin du patch 16.23.",
+    ]
+
+
+def test_the_verified_detail_of_a_missing_bulletin_shows_the_remark():
+    resultat = {"patch": "16.99", "bulletin": None, "remarque": "aucun bulletin"}
+
+    detail = detail_verifie([("bulletin_du_patch", {"patch": "16.99"}, resultat)])
+
+    assert detail.splitlines() == ["Bulletin du patch 16.99 :", "- aucun bulletin"]
+
+
+def test_the_bulletin_tool_is_offered_to_the_model():
+    noms = {schema["function"]["name"] for schema in SCHEMAS_OUTILS}
+
+    assert "bulletin_du_patch" in noms
+
+
+def test_the_instructions_forbid_concluding_that_the_theory_is_right():
+    # Essai du 25/11 : « la theorie a vu juste dans 8 cas sur 8 ... elle est
+    # donc correcte », 4 seulement etant prouvees.
+    consignes = consignes_envoyees()
+
+    assert "Ne conclus jamais que la theorie est correcte" in consignes
+    assert "combien de predictions sont prouvees" in consignes
