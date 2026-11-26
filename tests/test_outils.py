@@ -3,6 +3,7 @@
 parametres, jamais avec du texte du modele colle dans le SQL, et renvoie ses
 chiffres avec leur definition (la couche semantique)."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -281,17 +282,25 @@ def test_builds_reads_the_build_families_in_prod():
     assert "lol-meta-pipeline.lol_analytics.mart_ladder_build_families" in sql
 
 
-def test_builds_reads_the_first_three_items_of_each_player():
-    # Le contenu d'une famille : les 3 premiers objets termines de chaque
-    # joueur (int_ladder__build_families), nommes par la seed item_families.
+def test_builds_reads_the_items_precalculated_by_the_daily_run():
+    # Le contenu d'une famille vient de mart_ladder_build_family_items,
+    # calculee une fois par jour par le run (~1 Mo lu par question), et plus
+    # de la vue int_ladder__build_families (~480 Mo a chaque question).
     client = FakeBigQuery()
 
     builds_du_champion("Ezreal", "16.23", client)
 
     (sql,) = client.requetes
-    assert "lol-meta-pipeline.lol_analytics.int_ladder__build_families" in sql
-    assert "UNNEST(b.item_ids)" in sql
-    assert "lol-meta-pipeline.lol_analytics.item_families" in sql
+    assert "lol-meta-pipeline.lol_analytics.mart_ladder_build_family_items" in sql
+    assert "int_ladder__build_families" not in sql
+    # Le patch demande ; les 3 premiers objets de chaque famille, dans l'ordre
+    # de la table (1 = le plus frequent).
+    assert "i.patch_key = @patch" in sql
+    assert "i.item_rank <= 3" in sql
+    assert re.search(r"ORDER BY i\.item_rank\s*\)", sql)
+    # Le pourcentage part des nombres de parties, pas de la part deja arrondie
+    # a 4 decimales : un seul arrondi.
+    assert "ROUND(100 * i.games_with_item / i.family_games)" in sql
     # Le SELECT final reprend la liste calculee (sabotage du 23/11 : un NULL a
     # sa place passait, le faux BigQuery n'executant pas le SQL).
     select_final = sql.rsplit("SELECT", 1)[1]

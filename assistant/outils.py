@@ -290,11 +290,11 @@ def builds_du_champion(
                 f"poste inconnu : {poste!r} (postes acceptes : {sorted(POSTES)})"
             )
 
-    # Trois etapes : les familles du champion (la mart) ; les objets de leurs
-    # joueurs (les 3 premiers objets termines de chacun, une ligne par objet
-    # grace a UNNEST) ; les 3 plus frequents par famille. La vue
-    # int_ladder__build_families refait son calcul a chaque appel : ~450 Mo lus
-    # (mesure du 23/11), 0,04 % du gratuit mensuel de BigQuery.
+    # Deux etapes : les familles du champion ; les 3 premiers objets de chaque
+    # famille, lus dans mart_ladder_build_family_items. Cette table est calculee
+    # une fois par jour par le run (depuis l'image 6, 25/11) : ~1 Mo lu par
+    # question, au lieu de ~480 Mo quand l'outil refaisait le calcul de la vue
+    # des joueurs a chaque appel.
     sql = f"""
         WITH familles AS (
             SELECT *
@@ -304,36 +304,23 @@ def builds_du_champion(
                 AND (@poste IS NULL OR team_position = @poste)
         ),
 
-        objets AS (
-            SELECT b.team_position, b.build_family, item_id, COUNT(*) AS parties
-            FROM `{PROJET}.{DATASET}.int_ladder__build_families` AS b,
-                UNNEST(b.item_ids) AS item_id
-            WHERE b.patch_key = @patch
-                AND b.champion_id IN (SELECT champion_id FROM familles)
-            GROUP BY b.team_position, b.build_family, item_id
-        ),
-
         principaux AS (
             SELECT
-                o.team_position,
-                o.build_family,
+                i.team_position,
+                i.build_family,
                 ARRAY_AGG(
                     STRUCT(
-                        -- Un objet absent de la seed garde son numero.
-                        COALESCE(n.item_name, CAST(o.item_id AS STRING)) AS objet,
-                        CAST(ROUND(100 * o.parties / f.games) AS INT64)
+                        i.item_name AS objet,
+                        CAST(ROUND(100 * i.games_with_item / i.family_games) AS INT64)
                             AS pct_des_parties
                     )
-                    ORDER BY o.parties DESC, o.item_id
-                    LIMIT 3
+                    ORDER BY i.item_rank
                 ) AS objets_principaux
-            FROM objets AS o
-            INNER JOIN familles AS f
-                ON o.team_position = f.team_position
-                AND o.build_family = f.build_family
-            LEFT JOIN `{PROJET}.{DATASET}.item_families` AS n
-                ON o.item_id = n.item_id
-            GROUP BY o.team_position, o.build_family
+            FROM `{PROJET}.{DATASET}.mart_ladder_build_family_items` AS i
+            WHERE i.patch_key = @patch
+                AND i.champion_id IN (SELECT champion_id FROM familles)
+                AND i.item_rank <= 3
+            GROUP BY i.team_position, i.build_family
         ),
 
         duels AS (
