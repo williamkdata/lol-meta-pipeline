@@ -14,7 +14,11 @@ from google.cloud import bigquery
 
 from bigquery_loader import load_rows
 from ddragon import CDN_URL, LANGUE, fetch_versions, patch_of, season_versions
-from tooltips import spell_tooltip_key, tooltip_number_tags
+from tooltips import (
+    spell_tooltip_key,
+    tooltip_number_tags,
+    unfold_tooltip_references,
+)
 
 journal = logging.getLogger(__name__)
 
@@ -297,7 +301,18 @@ def kit_rows(
         "tooltips": [],
     }
 
-    for touche, chemin in spell_slots(fichier).items():
+    emplacements = spell_slots(fichier)
+    # L'annuaire des sorts a touche, par nom en minuscules : un nombre qualifie
+    # (@spell.KarmaMantra:TotalDamage@) dit a quel sort il appartient.
+    annuaire = {}
+    for touche, chemin in emplacements.items():
+        nom = chemin.split("/")[-1]
+        annuaire[nom.lower()] = (touche, nom)
+    # Les nombres des infobulles : ceux du sort lui-meme, et ceux qu'une autre
+    # infobulle cite (le Q de Karma cite des calculs de son R).
+    propres, cites = [], []
+
+    for touche, chemin in emplacements.items():
         sort = fichier[chemin].get("mSpell") or {}
         base = {**commun, "slot": touche, "spell_name": chemin.split("/")[-1]}
 
@@ -314,8 +329,35 @@ def kit_rows(
 
         infobulle = (textes or {}).get(spell_tooltip_key(touche, base["spell_name"]))
         if infobulle:
-            for nombre in tooltip_number_tags(infobulle):
-                lignes["tooltips"].append({**base, **nombre})
+            # Les renvois suivis d'abord (26/11/2026) : l'infobulle de Gnar Q
+            # n'est faite que de renvois vers les vrais textes.
+            depliee = unfold_tooltip_references(infobulle, textes)
+            for nombre in tooltip_number_tags(depliee):
+                # Le sort nomme n'est pas une colonne : il dit ou ranger le
+                # nombre (version C, decision de William du 26/11).
+                nomme = nombre.pop("spell")
+                if nomme is None or nomme == base["spell_name"].lower():
+                    propres.append({**base, **nombre})
+                elif nomme in annuaire:
+                    autre_touche, autre_nom = annuaire[nomme]
+                    cites.append(
+                        {
+                            **base,
+                            "slot": autre_touche,
+                            "spell_name": autre_nom,
+                            **nombre,
+                        }
+                    )
+                # Sinon, un sort derriere aucune touche : ses formules ne sont
+                # pas chargees, la ligne ne rejoindrait rien.
+
+    # Une seule ligne par (touche, nom, balise) : dbt le verifie. Les nombres du
+    # sort lui-meme passent avant ceux qu'on cite : a doublon egal, les mots
+    # qui suivent viennent de sa propre infobulle.
+    uniques = {}
+    for ligne in propres + cites:
+        uniques.setdefault((ligne["slot"], ligne["name"], ligne["tag"]), ligne)
+    lignes["tooltips"] = list(uniques.values())
     return lignes
 
 

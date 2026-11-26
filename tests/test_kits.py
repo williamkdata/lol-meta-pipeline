@@ -634,6 +634,130 @@ def test_kit_rows_reads_the_tooltip_of_each_spell():
     )
 
 
+# Les renvois et les nombres qualifies (26/11, version C) : au 16.23, 173
+# infobulles sur 1 568 ne sont que des renvois ({{spell_GnarQ_Tooltip}}), et
+# leurs nombres nomment leur sort (@spell.GnarQ:MiniTotalDamage@).
+
+
+def infobulles_ambessa(textes):
+    """Les lignes d'infobulles d'Ambessa : (touche, sort, nom, balise, mots)."""
+    lignes = kit_rows("16.21", 799, "Ambessa", kit_ambessa(), textes)["tooltips"]
+    return sorted(
+        (
+            ligne["slot"],
+            ligne["spell_name"],
+            ligne["name"],
+            ligne["tag"],
+            ligne["following_text"],
+        )
+        for ligne in lignes
+    )
+
+
+def test_kit_rows_follows_the_references_of_a_tooltip():
+    textes = {
+        "generatedtip_spell_ambessaw_tooltipextended": "{{spell_AmbessaW_Tooltip}}",
+        "spell_ambessaw_tooltip": TEXTES_16_21[
+            "generatedtip_spell_ambessaw_tooltipextended"
+        ],
+    }
+
+    assert infobulles_ambessa(textes) == infobulles_ambessa(TEXTES_16_21)
+    assert infobulles_ambessa(textes) != []
+
+
+def test_a_number_naming_another_spell_goes_to_that_spell():
+    # Le Q de Karma cite des calculs de son R (KarmaMantra) : le Q renforce est
+    # calcule dans le R. Le nombre va au sort qui porte le calcul.
+    textes = {
+        "generatedtip_spell_ambessaq_tooltipextended": (
+            "<physicalDamage>@spell.AmbessaR:Calc_Damage@ physical "
+            "damage</physicalDamage>"
+        ),
+    }
+
+    assert infobulles_ambessa(textes) == [
+        ("R", "AmbessaR", "calc_damage", "physicalDamage", "physical damage"),
+    ]
+
+
+def test_a_number_of_the_spell_itself_written_two_ways_gives_one_row():
+    textes = {
+        "generatedtip_spell_ambessaw_tooltipextended": (
+            "<shield>@Calc_Shield@ Shield</shield> puis "
+            "<shield>@spell.AmbessaW:Calc_Shield@ encore</shield>"
+        ),
+    }
+
+    assert infobulles_ambessa(textes) == [
+        ("W", "AmbessaW", "calc_shield", "shield", "Shield puis"),
+    ]
+
+
+def test_the_spell_own_tooltip_gives_the_words_first():
+    # Le meme calcul du R cite par l'infobulle du Q (lue avant) et par celle du
+    # R : les mots qui le suivent (de quoi un pourcentage est pris) viennent de
+    # l'infobulle du R lui-meme.
+    textes = {
+        "generatedtip_spell_ambessaq_tooltipextended": (
+            "<physicalDamage>@spell.AmbessaR:Calc_Damage@ vu du Q</physicalDamage>"
+        ),
+        "generatedtip_spell_ambessar_tooltipextended": (
+            "<physicalDamage>@Calc_Damage@ vu du R</physicalDamage>"
+        ),
+    }
+
+    assert infobulles_ambessa(textes) == [
+        ("R", "AmbessaR", "calc_damage", "physicalDamage", "vu du R"),
+    ]
+
+
+def test_the_own_tooltip_wins_even_when_it_names_its_own_spell():
+    # Le R ecrit son propre nombre sous la forme qualifiee : il reste a lui
+    # (sabotage du 26/11 : compare sans minuscules, il passait pour cite, et
+    # les mots du Q gagnaient).
+    textes = {
+        "generatedtip_spell_ambessaq_tooltipextended": (
+            "<physicalDamage>@spell.AmbessaR:Calc_Damage@ vu du Q</physicalDamage>"
+        ),
+        "generatedtip_spell_ambessar_tooltipextended": (
+            "<physicalDamage>@spell.AmbessaR:Calc_Damage@ vu du R</physicalDamage>"
+        ),
+    }
+
+    assert infobulles_ambessa(textes) == [
+        ("R", "AmbessaR", "calc_damage", "physicalDamage", "vu du R"),
+    ]
+
+
+def test_the_same_number_with_two_tags_keeps_both():
+    textes = {
+        "generatedtip_spell_ambessaq_tooltipextended": (
+            "<physicalDamage>@spell.AmbessaR:Calc_Damage@</physicalDamage>"
+        ),
+        "generatedtip_spell_ambessar_tooltipextended": (
+            "<trueDamage>@Calc_Damage@</trueDamage>"
+        ),
+    }
+
+    assert [ligne[:4] for ligne in infobulles_ambessa(textes)] == [
+        ("R", "AmbessaR", "calc_damage", "physicalDamage"),
+        ("R", "AmbessaR", "calc_damage", "trueDamage"),
+    ]
+
+
+def test_a_number_naming_a_spell_without_a_key_is_left_out():
+    # AmbessaWShield est un sort secondaire, derriere aucune touche : ses
+    # formules ne sont pas chargees, la ligne ne rejoindrait rien.
+    textes = {
+        "generatedtip_spell_ambessaw_tooltipextended": (
+            "<shield>@spell.AmbessaWShield:Calc_Shield@</shield>"
+        ),
+    }
+
+    assert infobulles_ambessa(textes) == []
+
+
 def test_every_column_of_a_kit_row_is_in_its_table_schema():
     """Une colonne fabriquee mais absente du schema serait refusee par BigQuery
     au premier vrai chargement (following_text, ajoute le 18/11)."""

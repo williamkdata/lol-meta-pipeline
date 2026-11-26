@@ -13,8 +13,10 @@ import re
 # Une balise (<magicDamage>, </magicDamage>, <br />, <font color='...'>) OU un
 # nombre (@TotalDamage@, @MovementSpeed*100@). Le nom du nombre s'arrete au
 # premier caractere qui n'est ni lettre, ni chiffre, ni _ ; le reste jusqu'au
-# @ suivant (un calcul comme *100) est ignore.
-_JETON = re.compile(r"<(/?)(\w+)[^>]*?(/?)>|@(\w+)[^@<>]*@")
+# @ suivant (un calcul comme *100) est ignore. Un nombre peut nommer son sort
+# (26/11/2026) : @spell.GnarQ:MiniTotalDamage@ (799 au 16.23, dont 35 avec
+# "Spell." ; aucune autre forme avec deux-points).
+_JETON = re.compile(r"<(/?)(\w+)[^>]*?(/?)>|@(?:[Ss]pell\.(\w+):)?(\w+)[^@<>]*@")
 
 # Les mots qui suivent un nombre disent ce qu'il est ("% max Health magic
 # damage") : 80 caracteres suffisent (mesure du 18/11/2026 sur les 69 formules
@@ -26,9 +28,11 @@ def tooltip_number_tags(texte: str) -> list[dict]:
     """Chaque nombre de l'infobulle, avec la balise la plus proche qui l'entoure
     et les mots qui le suivent.
 
-    Une ligne par couple (nom, balise) distinct, triee ; le nom en minuscules
+    Une ligne par (sort, nom, balise) distinct, triee ; le nom en minuscules
     (comme nos formules) ; balise None si le nombre n'est dans aucune.
     following_text : les mots qui suivent sa PREMIERE apparition (voir _suite).
+    spell : le sort que nomme un nombre qualifie, en minuscules
+    (@spell.GnarQ:MiniTotalDamage@ -> "gnarq") ; None pour un nombre simple.
 
     La methode : une pile. On lit le texte de gauche a droite ; une balise
     ouvrante est empilee, une fermante depile jusqu'a la sienne (une balise
@@ -37,13 +41,17 @@ def tooltip_number_tags(texte: str) -> list[dict]:
     sont pas empilees.
     """
     pile = []
-    couples = {}  # (nom, balise) -> mots qui suivent la premiere apparition
+    trios = {}  # (sort, nom, balise) -> mots qui suivent la premiere apparition
     for jeton in _JETON.finditer(texte):
-        fermante, balise, auto_fermante, nombre = jeton.groups()
+        fermante, balise, auto_fermante, sort, nombre = jeton.groups()
         if nombre is not None:
-            cle = (nombre.lower(), pile[-1] if pile else None)
-            if cle not in couples:
-                couples[cle] = _suite(texte, jeton.end())
+            cle = (
+                sort.lower() if sort else None,
+                nombre.lower(),
+                pile[-1] if pile else None,
+            )
+            if cle not in trios:
+                trios[cle] = _suite(texte, jeton.end())
         elif auto_fermante or balise.lower() == "br":
             continue
         elif not fermante:
@@ -52,8 +60,15 @@ def tooltip_number_tags(texte: str) -> list[dict]:
             while pile.pop() != balise:
                 pass
     return [
-        {"name": nom, "tag": balise, "following_text": couples[(nom, balise)]}
-        for nom, balise in sorted(couples, key=lambda c: (c[0], c[1] or ""))
+        {
+            "name": nom,
+            "tag": balise,
+            "following_text": trios[(sort, nom, balise)],
+            "spell": sort,
+        }
+        for sort, nom, balise in sorted(
+            trios, key=lambda t: (t[1], t[2] or "", t[0] or "")
+        )
     ]
 
 
@@ -65,6 +80,36 @@ def _suite(texte: str, debut: int) -> str:
     morceau = texte[debut:].split("@", 1)[0]
     morceau = re.sub(r"<[^>]*>", "", morceau)
     return " ".join(morceau.split())[:LONGUEUR_SUITE]
+
+
+# Un renvoi vers un autre texte du jeu : {{spell_GnarQ_Tooltip}}. Un nom
+# construit pendant la partie ({{ Spell_ApheliosP_GunShortDesc_@f1@ }}) ne
+# correspond pas (le @ n'est pas une lettre) : il reste tel quel.
+_RENVOI = re.compile(r"\{\{\s*(\w+)\s*\}\}")
+
+# Niveaux de renvois suivis au plus. Mesure du 26/11/2026 (16.23) : 2.
+PROFONDEUR_MAX = 5
+
+
+def unfold_tooltip_references(texte: str, textes: dict, _profondeur: int = 0) -> str:
+    """Le texte avec chaque renvoi {{cle}} remplace par le texte qu'il nomme,
+    lui-meme deplie. Au 16.23, 173 infobulles sur 1 568 n'ont que des renvois
+    (Gnar, Jayce, Kha'Zix...) : sans eux, pas de balise de degats a lire.
+
+    Les cles du texte du jeu sont en minuscules. Un renvoi introuvable
+    disparait (rien a lire). Plus de PROFONDEUR_MAX niveaux : ValueError (une
+    boucle a -> b -> a tournerait sans fin)."""
+
+    def remplace(renvoi: re.Match) -> str:
+        if _profondeur >= PROFONDEUR_MAX:
+            raise ValueError(
+                f"renvoi {{{{{renvoi.group(1)}}}}} : plus de {PROFONDEUR_MAX} "
+                "niveaux de renvois (une boucle ?)"
+            )
+        cible = textes.get(renvoi.group(1).lower(), "")
+        return unfold_tooltip_references(cible, textes, _profondeur + 1)
+
+    return _RENVOI.sub(remplace, texte)
 
 
 def spell_tooltip_key(slot: str, spell_name: str) -> str:
